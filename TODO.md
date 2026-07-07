@@ -80,6 +80,8 @@
     test-patch-roundtrip.sh # 端到端闭环测试：改动→导出→还原→重应用，不编译 ✅
     render-config.sh        # 打包期渲染：模板占位符 → 真实渠道值（CI Secret/channel.env）✅
   installer/                # 面向终端用户的安装器
+    install.sh                # Mac 安装器：本地二进制 + 写 config + 加 PATH + 命令名 cx ✅
+    install.ps1               # Windows 安装器：本地二进制 + 写 config + 加 PATH + 命令名 cx ✅
     write-default-config.sh   # 首启动幂等写入 config.toml（Mac/Linux）✅
     write-default-config.ps1  # 首启动幂等写入 config.toml（Windows，与 .sh 行为对齐）✅
   .github/workflows/
@@ -157,11 +159,16 @@
   - release 编译只 `cargo build` 不 `cargo test`，故不触发中文化补丁导致失败的快照测试
   - 产物：`cx.exe`（Win）、`cx`（Mac x64/arm64），由 upload-artifact 上传，供 US-013 下游 download-artifact 复用
   - macOS runner 自带 bash 3.2 不支持 `mapfile`/`declare -A`，工作流 `brew install bash` 后再跑 apply-patches.sh
-- [ ] **Mac 安装器** `installer/install.sh`
-  - 改自官方 `scripts/install/install.sh`，去掉 GitHub 下载逻辑
-  - 本地二进制 + 写 config + 加 PATH + 命令名 `cx`
-- [ ] **Windows 安装器** `installer/install.ps1`
-  - 改自官方 `install.ps1`，放二进制 + 加 PATH + 写 config
+- [x] **Mac 安装器** `installer/install.sh`（US-010 完成）
+  - 改自官方 `scripts/install/install.sh`，去掉全部 GitHub 下载/校验/版本解析 + standalone releases/current 软链多版本布局
+  - 本地二进制（`--binary`/`CX_BINARY`/按架构自动探测 `cx-<vendor_target>`）+ 调 `write-default-config.sh` 写 config + 保留官方 PATH 注入 + 命令名 `cx`
+  - 支持 x64（`x86_64-apple-darwin`）与 arm64（`aarch64-apple-darwin`），含 Rosetta 检测
+  - 二进制装成 `$CX_INSTALL_DIR`（默认 `~/.local/bin`）下单文件 `cx`；PATH 注入 profile 保证新终端可直接调用
+- [x] **Windows 安装器** `installer/install.ps1`（US-011 完成）
+  - 改自官方 `install.ps1`，去掉全部 GitHub 下载/校验/版本解析 + standalone releases/current junction 多版本布局/安装锁
+  - 本地二进制（`-Binary`/`CX_BINARY`/按架构自动探测 `cx-<target>.exe`）+ 调 `write-default-config.ps1` 写 config + 命令名 `cx`
+  - 支持 x64（`x86_64-pc-windows-msvc`）与 arm64（`aarch64-pc-windows-msvc`）
+  - 二进制装成 `$CX_INSTALL_DIR`（默认 `%LOCALAPPDATA%\Programs\cx\bin`）下单文件 `cx.exe`；PATH 写用户环境变量，PowerShell + CMD 新会话都生效
 - [ ] **更新跟随流程** `scripts/update.sh`
   - `fetch 官方 → 更新 BASE_SHA → apply-patches → 冲突则手改后 make-patches → 提交`
 
