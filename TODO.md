@@ -66,7 +66,9 @@
   brand/
     BASE_SHA                # 跟随的 release tag 对应 commit ✅
     BASE_TAG                # 跟随的官方 release tag（如 rust-v0.142.5）✅
-    config.template.toml    # 内置渠道模板（占位 base_url/token）✅
+    config.template.toml    # 内置渠道模板（占位符 __BASE_URL__/__TOKEN__/__MODEL__）✅
+    channel.env.example     # 渠道真实值示例（复制为 channel.env 填真实值，后者 .gitignore 忽略）✅
+    channel.env             # 渠道真实值（含 token，本地打包用，不进 git）— 按需创建
     patches/                # 补丁存放目录（含 patches.manifest）
     patches.manifest        # 补丁分组清单 ✅（分段格式，脚本已统一解析）
     frames/                 # 自定义启动动画（可选，暂空）
@@ -76,7 +78,9 @@
     apply-patches.sh        # 应用补丁到基线 ✅（含前后校验）
     make-patches.sh         # 从工作区导出补丁 ✅（含导出校验）
     test-patch-roundtrip.sh # 端到端闭环测试：改动→导出→还原→重应用，不编译 ✅
+    render-config.sh        # 打包期渲染：模板占位符 → 真实渠道值（CI Secret/channel.env）✅
   installer/                # 面向终端用户的安装器（暂空）
+  .gitignore                # 忽略真实值(channel.env)、渲染产物(config.toml/dist)、工作文件 ✅
   TODO.md                   # 本文件
 ```
 
@@ -122,8 +126,15 @@
 
 ### 🟡 P1 — 内置渠道（方案 A：纯配置注入，不改源码）
 
-- [ ] 确定占位符替换机制：打包时把 `config.template.toml` 里
-  `__BASE_URL__` / `__TOKEN__` / `__MODEL__` 替换成真实值
+- [x] **占位符替换机制 `scripts/render-config.sh`（US-007 完成）**：打包期把
+  `config.template.toml` 里 `__BASE_URL__` / `__TOKEN__` / `__MODEL__` 替换成真实值。
+  - 真实值来源与替换点集中在 `render-config.sh` 顶部的 `PLACEHOLDER_VARS` 映射表：
+    `__BASE_URL__←CX_BASE_URL`、`__TOKEN__←CX_TOKEN`、`__MODEL__←CX_MODEL`。
+  - 值优先级：进程环境变量（CI 里由 GitHub Actions Secret 注入，不进 git） >
+    本地 `brand/channel.env`（已被根 `.gitignore` 忽略，不进 git；示例见
+    `brand/channel.env.example`）。换渠道只改 Secret / channel.env，模板与源码都不动。
+  - 校验：任一占位符对应变量为空则列出缺失变量 `exit 1`；渲染后残留 `__XXX__` 也报错退出。
+  - 写文件时 chmod 600（含 token，按敏感文件处理）；成品 `brand/config.toml` 已被 gitignore。
 - [ ] 首启动写入逻辑（放在安装器里）：检查 `~/.codex/config.toml`，
   不存在或缺 `[model_providers.newapi]` 则写入；幂等，不覆盖用户修改
 

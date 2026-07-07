@@ -4,7 +4,8 @@
 #   - 本文件是「模板」，安装器会在用户首次运行时把内容写入 ~/.codex/config.toml。
 #   - 写入是幂等的：如果用户的 config.toml 已存在且已含 [model_providers.newapi]，
 #     则不覆盖，尊重用户后续的手动修改。
-#   - 下面的 __BASE_URL__ / __TOKEN__ / __MODEL__ 是占位符，打包时由脚本替换成真实值。
+#   - 下面配置值里的占位符（BASE_URL / TOKEN / MODEL 三处）打包时由 render-config.sh
+#     替换成真实值；真实值来源见 brand/channel.env.example 与 render-config.sh 顶部说明。
 #
 # 关键约束（调研已确认）：
 #   1. 当前版本 Codex 只支持 OpenAI Responses API，wire_api 只能是 "responses"。
