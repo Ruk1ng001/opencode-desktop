@@ -1,0 +1,12 @@
+# 补丁分组清单：定义每个补丁包含哪些源码文件（相对 codex/ 的路径）。
+# 格式：每段以 [补丁名] 开头，下面列出属于该补丁的文件路径，一行一个。
+# make-patches.sh 按此清单把工作区改动导出成独立的 .patch 文件。
+# 分组的意义：官方更新导致冲突时，只有相关补丁需要重做，互不牵连。
+
+[01-rename-cx]
+codex-rs/cli/src/main.rs
+
+[02-brand-i18n]
+codex-rs/tui/src/onboarding/welcome.rs
+codex-rs/tui/src/onboarding/trust_directory.rs
+codex-rs/tui/src/chatwidget.rs

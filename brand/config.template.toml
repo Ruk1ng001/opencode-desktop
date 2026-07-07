@@ -1,0 +1,24 @@
+# ⚠️ 内置渠道配置模板(首次启动由安装器/启动器写入 ~/.codex/config.toml）
+#
+# 说明：
+#   - 本文件是「模板」，安装器会在用户首次运行时把内容写入 ~/.codex/config.toml。
+#   - 写入是幂等的：如果用户的 config.toml 已存在且已含 [model_providers.newapi]，
+#     则不覆盖，尊重用户后续的手动修改。
+#   - 下面的 __BASE_URL__ / __TOKEN__ / __MODEL__ 是占位符，打包时由脚本替换成真实值。
+#
+# 关键约束（调研已确认）：
+#   1. 当前版本 Codex 只支持 OpenAI Responses API，wire_api 只能是 "responses"。
+#      new-api 中转必须提供 /v1/responses 端点，否则免登录能进界面但对话会失败。
+#   2. provider 的 key 不能用保留字：openai / amazon-bedrock / ollama / lmstudio。
+#      这里用 "newapi"。
+#   3. experimental_bearer_token + requires_openai_auth=false ⇒ 跳过登录界面。
+
+model = "__MODEL__"
+model_provider = "newapi"
+
+[model_providers.newapi]
+name = "内置渠道"
+base_url = "__BASE_URL__"
+wire_api = "responses"
+experimental_bearer_token = "__TOKEN__"
+requires_openai_auth = false
