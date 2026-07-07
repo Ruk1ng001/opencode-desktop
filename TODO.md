@@ -90,6 +90,7 @@
     ci.yml                  # CI 入口：校验补丁可应用 + 复用 build.yml 多平台编译 ✅
     release.yml             # 自动检测+发布：schedule/dispatch→update.sh→复用 build.yml→gh release ✅
   .gitignore                # 忽略真实值(channel.env)、渲染产物(config.toml/dist)、工作文件 ✅
+  CUSTOMIZATION.md          # 定制替换点清单：命令名/品牌名/渠道/动画 + 更新发布流程 ✅
   TODO.md                   # 本文件
 ```
 
