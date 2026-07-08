@@ -17,7 +17,7 @@
 | 2 | [品牌名 / 欢迎语](#2-品牌名--欢迎语) | 补丁 `02-brand-i18n` | 改 TUI 中文文案 |
 | 3 | [渠道 base_url / token / model](#3-渠道-base_url--token--model) | 配置注入（无补丁） | 改环境变量 / `channel.env`，不改源码 |
 | 4 | [启动动画](#4-启动动画) | 新建补丁组（当前无） | 替换 frames 文本或改 variant 选择 |
-| 5 | [安装目录 / PATH 标记文案](#5-安装目录--path-标记文案附带) | 安装器脚本 | 改 `installer/install.*` 常量 |
+| 5 | [安装器与原生安装包](#5-安装器与原生安装包) | 安装器脚本 / `.pkg` / `.msi` 配置 | 改产品名 / Publisher / 图标 / 标识符等 |
 
 ---
 
@@ -145,26 +145,65 @@ experimental_bearer_token = "__TOKEN__"
 
 ---
 
-## 5. 安装目录 / PATH 标记文案（附带）
+## 5. 安装器与原生安装包
 
-安装器里也有若干与品牌名绑定的字符串，改名时一并处理：
+安装器（脚本安装器 + 原生 `.pkg`/`.msi`）里有大量与品牌绑定的字符串与标识符，
+改品牌时需一并处理。下表按「载体」归类，逐项标明所在文件与修改方法。
 
-- `installer/install.sh`（Mac）：PATH 注入标记块 `# >>> cx installer >>>`、
-  默认安装目录、二进制探测名 `cx-<target>`、命令名 `cx`。
-- `installer/install.ps1`（Windows）：默认安装目录 `%LOCALAPPDATA%\Programs\cx\bin`、
-  二进制探测名 `cx-<target>.exe`、用户 PATH 环境变量、命令名 `cx`。
-- `installer/macos-pkg/`（macOS `.pkg`）：`build-pkg.sh` 顶部的 `PKG_IDENTIFIER`
-  （`com.cx.cli`，reverse-DNS 包标识）与 `COMMAND_NAME`、payload 安装目标
-  `INSTALL_PREFIX`（`/usr/local/bin`）；`uninstall.sh` 的 `PKG_IDENTIFIER` 默认值
-  必须与之一致（否则 `pkgutil --forget` 找不到收据）。改品牌时三者一并同步。
-- `installer/windows-msi/`（Windows `.msi`）：`cx.wxs` 里的 `Package Name`（ARP 显示名
-  `cx CLI`）、`Manufacturer`（Publisher）、安装目录 `INSTALLFOLDER`（默认目录名 `cx`）、
-  `Environment` 写的用户 PATH、注册表 KeyPath 键 `Software\cx\cx-cli`，以及
-  **`UpgradeCode` GUID**（跨版本升级的稳定标识，改品牌**不要**改它，否则旧版无法被新版
-  自动升级/卸载）。`build-msi.ps1` 里的产物文件名 `cx-<version>-<arch>.msi`、可选签名的
-  `CX_SIGN_PFX_*` 环境变量。
+### 5.1 脚本安装器（裸二进制备选路径）
 
-二进制探测名需与 `build.yml` 产物命名对齐（改名时两边同步）。
+| 替换点 | 文件 | 说明 / 修改方法 |
+|---|---|---|
+| PATH 注入标记块 | `installer/install.sh` | `# >>> cx installer >>>` … `# <<< cx installer <<<`，改品牌时连标记文案一起改 |
+| 默认安装目录 | `installer/install.sh` | Mac 默认 `$BIN_DIR`；`installer/install.ps1` 默认 `%LOCALAPPDATA%\Programs\cx\bin` |
+| 二进制探测名 | `installer/install.sh` / `install.ps1` | `cx-<target>` / `cx-<target>.exe`，**须与 `build.yml` 产物命名对齐** |
+| 命令名 | `installer/install.sh` / `install.ps1` | `cx`（与替换点 1 的 `COMMAND_NAME` 保持一致） |
+
+### 5.2 macOS 原生 `.pkg`（`installer/macos-pkg/`）
+
+| 替换点 | 文件 | 说明 / 修改方法 |
+|---|---|---|
+| **安装器产品名** | `build-pkg.sh` | `productbuild` distribution.xml 里的 `<title>$COMMAND_NAME CLI</title>`（向导标题）、`<choice title>`，由 `COMMAND_NAME` 变量派生 |
+| **pkg identifier** | `build-pkg.sh` 顶部 `PKG_IDENTIFIER="com.cx.cli"` | reverse-DNS 包标识（`pkgbuild --identifier` + distribution.xml 的 `<pkg-ref id>`）。改成正式厂商域名如 `com.acme.mycli` |
+| **Publisher / 厂商** | `build-pkg.sh` | distribution.xml 的 `<organization>$PKG_IDENTIFIER</organization>`。可改为独立的厂商标识 |
+| 命令名 | `build-pkg.sh` 顶部 `COMMAND_NAME="cx"` | payload 里二进制文件名 + 各处文案的单一来源 |
+| 安装路径 | `build-pkg.sh` 顶部 `INSTALL_PREFIX="/usr/local/bin"` | payload 铺到系统根的目标目录 |
+| **图标** | （当前无） | pkg 当前不含自定义图标。如需：在 distribution.xml 加 `<background>` / 用带图标的 `.app` 载荷，或对 `.pkg` 后处理；属可选增强 |
+| 卸载脚本标识符 | `uninstall.sh` 的 `PKG_IDENTIFIER` 默认值 | **必须与 `build-pkg.sh` 的 `PKG_IDENTIFIER` 一致**，否则 `pkgutil --forget` 找不到收据 |
+
+> ⚠️ 改 `PKG_IDENTIFIER` 时 `build-pkg.sh` 与 `uninstall.sh` 两处必须同步，否则卸载
+> 脚本无法遗忘安装收据。
+
+### 5.3 Windows 原生 `.msi`（`installer/windows-msi/`）
+
+| 替换点 | 文件 | 说明 / 修改方法 |
+|---|---|---|
+| **安装器产品名** | `cx.wxs` `<Package Name="cx CLI">` | ARP（应用和功能）里的 DisplayName。改成正式产品名 |
+| **Publisher / 厂商** | `cx.wxs` `<Package Manufacturer="cx">` | ARP 里的「发布者」。改成正式厂商名 |
+| **UpgradeCode（GUID）** | `cx.wxs` `<Package UpgradeCode="aa574f41-...">` | 跨版本升级的**稳定标识**。**改品牌时不要改它**——旧版靠它被新版自动升级/卸载；改了会导致新旧版本无法互相识别、并存两份。仅当要开一条全新产品线时才换新 GUID |
+| **ProductCode** | 无需手改 | `<Package>` 未写 `ProductId`/`Id`，WiX 每次构建**自动生成**新 ProductCode（`Id="*"` 语义）。`MajorUpgrade` 靠稳定的 UpgradeCode 处理升级，ProductCode 逐版本变化是正确行为，无需干预 |
+| 安装目录名 | `cx.wxs` `<Directory Id="INSTALLFOLDER" Name="cx">` | 默认目录 `%LOCALAPPDATA%\Programs\cx` 的末段目录名 |
+| 注册表 KeyPath | `cx.wxs` `Key="Software\cx\cx-cli"` | PathEnv 组件的 HKCU 标记键，改品牌时同步 |
+| ARP 备注 | `cx.wxs` `ARPCOMMENTS` / `SummaryInformation Description` | 展示用描述文案 |
+| **图标** | （当前无） | `.msi` 当前未设 `ARPPRODUCTICON`。如需 ARP 图标：加 `<Icon Id="cx.ico" SourceFile="...">` + `<Property Id="ARPPRODUCTICON" Value="cx.ico">`；属可选增强 |
+| 产物文件名 | `build-msi.ps1` | `cx-<version>-<arch>.msi` |
+| 许可页文本 | `License.rtf` | 安装向导许可页内容 |
+
+### 5.4 图标（当前状态）
+
+**`.pkg` 与 `.msi` 当前均不含自定义品牌图标**（用系统默认）。仓库里也没有图标资源文件。
+若要加品牌图标，属可选增强，改法见上面 5.2 / 5.3 的「图标」行；同时需把 `.ico`（Windows）
+/ 图标素材加入仓库并在打包脚本里引用。
+
+### 5.5 可选签名 / 公证的 Secret（不改文件，配 CI Secret）
+
+不改任何源文件，只在 CI 配置对应 Secret 即启用签名（未配则产未签名包，用户按各
+安装包 README 的 Gatekeeper / SmartScreen 绕过法安装）：
+
+- macOS `.pkg`：`CX_SIGN_IDENTITY`（Developer ID Installer 证书）+ `CX_NOTARIZE_PROFILE`
+  （notarytool keychain profile）→ `build-pkg.sh` 自动签名 + 公证。
+- Windows `.msi`：`CX_SIGN_PFX_BASE64`（base64 的 `.pfx`）+ `CX_SIGN_PFX_PASSWORD`
+  （+ 可选 `CX_SIGN_TIMESTAMP_URL`）→ `build-msi.ps1` 自动 Authenticode 签名。
 
 ---
 
