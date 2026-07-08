@@ -340,8 +340,12 @@ if [ "$arch" = "aarch64" ]; then
   vendor_target="aarch64-apple-darwin"
   platform_label="macOS (Apple Silicon)"
 else
-  vendor_target="x86_64-apple-darwin"
-  platform_label="macOS (Intel)"
+  # 暂停 Intel macOS 产物：GitHub 免费额度下 macos-13(Intel) runner 排队严重，
+  # 已从编译矩阵与发布产物中暂时移除（见 .github/workflows/build.yml）。
+  # 因此无对应发布资产，给出清晰报错而非去下载不存在的文件（404）。
+  echo "暂不支持 macOS (Intel)：当前发布未提供 x86_64-apple-darwin 产物。" >&2
+  echo "Apple Silicon (arm64) 可正常安装；Intel 支持恢复后本提示会移除。" >&2
+  exit 1
 fi
 
 binary_src="$(resolve_binary)"

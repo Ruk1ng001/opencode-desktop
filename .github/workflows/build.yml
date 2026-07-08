@@ -49,11 +49,14 @@ jobs:
             target: x86_64-pc-windows-msvc
             bin: codex.exe
             out: cx.exe
-          # macOS Intel：原生编译，产物 cx
-          - os: macos-13
-            target: x86_64-apple-darwin
-            bin: codex
-            out: cx
+          # macOS Intel：暂时关闭。macos-13（Intel）runner 在 GitHub 免费额度下
+          # 资源极其紧张，排队常达数小时，拖垮整条编译/发布流水线。
+          # 恢复方式：取消下面三行注释即可（release.yml 与 install.sh 亦有对应的
+          # Intel 开关注释，需一并恢复）。
+          # - os: macos-13
+          #   target: x86_64-apple-darwin
+          #   bin: codex
+          #   out: cx
           # macOS Apple Silicon：原生编译，产物 cx
           - os: macos-14
             target: aarch64-apple-darwin

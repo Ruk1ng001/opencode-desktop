@@ -213,10 +213,12 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release-assets
-          cp artifacts/release-x86_64-apple-darwin/cx        release-assets/cx-x86_64-apple-darwin
+          # macOS Intel（x86_64-apple-darwin）暂时关闭，见 build.yml 矩阵注释。
+          # 恢复方式：取消下面 Intel 相关行的注释，并恢复 build.yml / install.sh 对应开关。
+          # cp artifacts/release-x86_64-apple-darwin/cx        release-assets/cx-x86_64-apple-darwin
           cp artifacts/release-aarch64-apple-darwin/cx       release-assets/cx-aarch64-apple-darwin
           cp artifacts/release-x86_64-pc-windows-msvc/cx.exe release-assets/cx-x86_64-pc-windows-msvc.exe
-          chmod +x release-assets/cx-x86_64-apple-darwin release-assets/cx-aarch64-apple-darwin
+          chmod +x release-assets/cx-aarch64-apple-darwin
           ls -lh release-assets
 
       - name: 计算定制版本号 + 创建 Release
@@ -250,16 +252,16 @@ jobs:
           - 上游 release tag：\`${UPSTREAM_TAG}\`（openai/codex）
           - 本次定制版本：\`${custom_tag}\`
 
-          ## 包含产物（三平台裸二进制）
-          - \`cx-x86_64-apple-darwin\`（macOS Intel）
+          ## 包含产物（裸二进制）
           - \`cx-aarch64-apple-darwin\`（macOS Apple Silicon）
           - \`cx-x86_64-pc-windows-msvc.exe\`（Windows x64）
+
+          > macOS Intel（x86_64）因 CI runner 资源紧张暂时未发布。
 
           安装参见仓库 \`installer/\` 下的 install.sh（Mac）/ install.ps1（Windows）。
           EOF
 
           gh release create "$custom_tag" \
-            release-assets/cx-x86_64-apple-darwin \
             release-assets/cx-aarch64-apple-darwin \
             release-assets/cx-x86_64-pc-windows-msvc.exe \
             --title "$custom_tag" \
