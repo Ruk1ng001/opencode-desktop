@@ -280,10 +280,71 @@ jobs:
           path: dist/cx-*.pkg
           if-no-files-found: error
 
+  # —— 4b. 在 Windows runner 上构建原生 .msi（US-011） ——
+  # WiX/MSI 是 Windows 工具链，必须在 windows runner 跑。
+  # 这一步会把渠道 config（含 token）渲染进 msi，故只在发布流程里做，且经 Secret 注入。
+  package_windows:
+    name: 构建 Windows .msi
+    needs: [detect, build, version]
+    if: needs.detect.outputs.should_release == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout（基线更新后的 commit，取到 installer/ 与 brand/ 脚本）
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.detect.outputs.ref }}
+          persist-credentials: false
+
+      - name: 下载 Windows x64 编译产物
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-x86_64-pc-windows-msvc
+          path: dist
+
+      # render-config.sh 用了 declare -A（bash 4+）；windows runner 的 git-bash 是 bash 4+，可直接跑。
+      - name: 渲染成品 config（占位符 → 真实渠道值，经 Secret 注入）
+        env:
+          CX_BASE_URL: ${{ secrets.CX_BASE_URL }}
+          CX_TOKEN: ${{ secrets.CX_TOKEN }}
+          CX_MODEL: ${{ secrets.CX_MODEL }}
+        shell: bash
+        run: bash scripts/render-config.sh dist/config.toml
+
+      - name: 安装 WiX Toolset（dotnet 全局工具 + UI 扩展）
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix
+          wix extension add -g WixToolset.UI.wixext
+
+      - name: 构建 .msi（装 cx.exe + 写用户 PATH + ARP 卸载项 + 幂等写 config）
+        shell: pwsh
+        env:
+          CX_VERSION: ${{ needs.version.outputs.custom_tag }}
+          # 可选 Authenticode 代码签名：配置了对应 Secret 才生效，否则产出未签名 .msi。
+          CX_SIGN_PFX_BASE64: ${{ secrets.CX_SIGN_PFX_BASE64 }}
+          CX_SIGN_PFX_PASSWORD: ${{ secrets.CX_SIGN_PFX_PASSWORD }}
+        run: |
+          installer\windows-msi\build-msi.ps1 `
+            -Binary dist\cx.exe `
+            -Config dist\config.toml `
+            -Version $env:CX_VERSION `
+            -Arch x64 `
+            -Out "dist\cx-$($env:CX_VERSION)-x64.msi"
+
+      - name: 上传 .msi 产物
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: release-windows-msi
+          path: dist/cx-*.msi
+          if-no-files-found: error
+
   # —— 5. 汇总产物 → 创建 GitHub Release ——
   release:
     name: 创建 GitHub Release
-    needs: [detect, build, version, package_macos]
+    needs: [detect, build, version, package_macos, package_windows]
     if: needs.detect.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -315,6 +376,8 @@ jobs:
           chmod +x release-assets/cx-aarch64-apple-darwin
           # macOS 原生安装包（US-010），文件名含版本，直接透传。
           cp artifacts/release-macos-pkg/cx-*.pkg release-assets/
+          # Windows 原生安装器（US-011），文件名含版本，直接透传。
+          cp artifacts/release-windows-msi/cx-*.msi release-assets/
           ls -lh release-assets
 
       - name: 创建 Release
@@ -338,12 +401,15 @@ jobs:
           - 本次定制版本：\`${custom_tag}\`
 
           ## 包含产物
+          - \`cx-${custom_tag}-x64.msi\`（Windows x64 原生安装器，双击按向导安装）
           - \`cx-${custom_tag}-arm64.pkg\`（macOS Apple Silicon 原生安装包，双击安装）
           - \`cx-aarch64-apple-darwin\`（macOS Apple Silicon 裸二进制，配合 install.sh）
           - \`cx-x86_64-pc-windows-msvc.exe\`（Windows x64 裸二进制，配合 install.ps1）
 
           > macOS Intel（x86_64）因 CI runner 资源紧张暂时未发布。
 
+          Windows 用户推荐下载 \`.msi\` 双击按向导安装（装完新开终端直接 \`cx\`）。安装/卸载与
+          SmartScreen 绕过说明见 \`installer/windows-msi/README.md\`。
           macOS 用户推荐下载 \`.pkg\` 双击安装。安装/卸载与 Gatekeeper 说明见
           \`installer/macos-pkg/README.md\`。裸二进制安装参见 \`installer/\` 下的
           install.sh（Mac）/ install.ps1（Windows）。

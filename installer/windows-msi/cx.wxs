@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  cx.wxs —— WiX Toolset(v4/v5) 源文件：定义 cx CLI 的 Windows 原生安装器（.msi）(US-011)。
+
+  产出的 .msi 双击即弹出图形化安装向导（WixUI_InstallDir）：
+    欢迎页 → 许可页 → 选择安装目录页 → 确认页 → 进度页 → 完成页。
+
+  ── 安装做三件事 ────────────────────────────────────────────────────
+    1. 二进制：把 cx.exe 装到 %LOCALAPPDATA%\Programs\cx（可在向导中改目录）。
+    2. PATH：把安装目录写入「用户级」PATH 环境变量 —— PowerShell 与 CMD 的新会话
+       都能直接 `cx`，无需运行任何脚本（验收 2）。
+    3. 配置：安装后以幂等方式把打包期注入的成品 config.toml 写入
+       %USERPROFILE%\.codex\config.toml（委托 US-008 的 write-default-config.ps1，
+       不覆盖用户已有配置，验收 4）。
+
+  ── 为什么 per-user 安装 ────────────────────────────────────────────
+    Scope="perUser" 装到 %LOCALAPPDATA%（免管理员 / 免 UAC），且安装动作以「当前用户」
+    身份运行 —— 写配置的自定义动作天然落到该用户 %USERPROFILE%\.codex，PATH 也写用户级，
+    与验收「新终端直接 cx」完全对齐。这也与脚本安装器 install.ps1 的默认目录一致。
+
+  ── ARP（应用和功能 / 控制面板）卸载入口（验收 3）─────────────────────
+    MSI 标准机制自动登记：DisplayName=Name、DisplayVersion=Version、Publisher=Manufacturer、
+    卸载命令=msiexec /x <ProductCode>。无需手写，见下方 Package 属性。
+
+  ── 打包期由外部传入的预处理变量（build-msi.ps1 用 -d 定义）───────────
+    var.CxExe          cx.exe 路径（build.yml 编译产物）
+    var.CxConfig       成品 config.toml 路径（render-config.sh 渲染产物，含真实渠道值）
+    var.CxWriter       write-default-config.ps1 路径（US-008 幂等写入脚本）
+    var.LicenseRtf     许可页 RTF 文件路径
+    var.ProductVersion MSI 数字版本（形如 0.142.5.1，由 custom_tag 转换而来）
+    var.DisplayVersion 展示用完整定制版本（形如 0.142.5-cx.1）
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+
+  <Package
+      Name="cx CLI"
+      Manufacturer="cx"
+      Version="$(var.ProductVersion)"
+      UpgradeCode="aa574f41-bd5d-4e76-b51e-9e3827206c01"
+      Scope="perUser"
+      Compressed="yes"
+      InstallerVersion="500">
+
+    <SummaryInformation
+        Description="cx CLI 安装器（$(var.DisplayVersion)）" />
+
+    <!-- 主版本升级：同 UpgradeCode 的旧版本在安装新版时自动移除；禁止降级。 -->
+    <MajorUpgrade
+        AllowSameVersionUpgrades="yes"
+        DowngradeErrorMessage="已安装 cx CLI 的更高版本，无法降级安装。请先卸载现有版本。" />
+
+    <!-- 单文件 msi：把 cab 嵌进 msi。 -->
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- ARP 详情补充（DisplayName/版本/Publisher/卸载命令由 MSI 标准机制自动登记）。 -->
+    <Property Id="ARPCOMMENTS" Value="cx —— 基于 openai/codex 的定制跟随版本（$(var.DisplayVersion)）" />
+
+    <!-- 安装目录：默认 %LOCALAPPDATA%\Programs\cx，可在向导「选择安装目录」页修改。 -->
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="cx" />
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="cx CLI" Level="1">
+      <!-- 1) cx.exe 主二进制。 -->
+      <Component Id="CxExe" Directory="INSTALLFOLDER" Guid="179f0a9d-d34c-41b5-bfb9-f30b89c916ee">
+        <File Id="cxexe" Source="$(var.CxExe)" Name="cx.exe" KeyPath="yes" />
+      </Component>
+
+      <!-- 2) 配置写入所需的支撑文件：幂等写入脚本 + 成品 config（供安装后自定义动作使用）。
+              config.toml 含渠道 token，随安装装入用户自己的 %LOCALAPPDATA% 目录（用户机器本地，
+              NTFS 默认仅该用户可读），卸载时随之移除。 -->
+      <Component Id="ConfigSupport" Directory="INSTALLFOLDER" Guid="8e5c8b30-de0b-4f64-8523-65d4ff0b5a2e">
+        <File Id="writerps1" Source="$(var.CxWriter)" Name="write-default-config.ps1" KeyPath="yes" />
+        <File Id="configtoml" Source="$(var.CxConfig)" Name="config.toml" />
+      </Component>
+
+      <!-- 3) PATH：写「用户级」PATH（System="no"），PowerShell 与 CMD 新会话共享，
+              一次写入两边新会话都能直接 cx（验收 2）。Permanent="no" ⇒ 卸载时移除。
+              组件需要一个 KeyPath，用 HKCU 下一处标记注册表值充当。 -->
+      <Component Id="PathEnv" Directory="INSTALLFOLDER" Guid="bea51e21-8cbe-4c24-92e2-c8f7f902047f">
+        <RegistryValue Root="HKCU" Key="Software\cx\cx-cli" Name="InstallDir"
+                       Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
+        <Environment Id="UpdatePath" Name="PATH" Value="[INSTALLFOLDER]"
+                     Permanent="no" Part="last" Action="set" System="no" />
+      </Component>
+    </Feature>
+
+    <!-- ── 安装后幂等写入内置渠道配置（验收 4，委托 US-008 write-default-config.ps1）──
+         设计取舍（本机无 Windows/WiX，选最稳的核心 WiX 写法，不依赖 util 扩展的 CA 二进制）：
+           - Execute="immediate" + After="InstallFinalize"：immediate 模式下 [INSTALLFOLDER]
+             / [System64Folder] 等属性可正常解析（deferred 动作则拿不到属性表）；
+             排在 InstallFinalize 之后，此时文件已落盘，powershell 能读到 writer 与 config。
+           - per-user 安装以「当前用户」身份运行，powershell 的 $HOME/$env:USERPROFILE 即该用户，
+             writer 幂等写入其 %USERPROFILE%\.codex\config.toml。
+           - Return="ignore"：同步执行但忽略退出码 —— 写配置失败不使整包安装失败
+             （二进制已装好，cx 仍可用），与 macOS pkg 的 postinstall「失败只 warn」一致。
+           - Condition NOT Installed：仅首装 / 主版本升级时运行（幂等重跑无副作用），
+             修复 / 卸载不重复触发。 -->
+    <CustomAction Id="WriteDefaultConfig"
+        Directory="INSTALLFOLDER"
+        ExeCommand="[System64Folder]WindowsPowerShell\v1.0\powershell.exe -ExecutionPolicy Bypass -NoProfile -NonInteractive -WindowStyle Hidden -File &quot;[INSTALLFOLDER]write-default-config.ps1&quot; -SourceConfig &quot;[INSTALLFOLDER]config.toml&quot;"
+        Execute="immediate"
+        Return="ignore" />
+    <InstallExecuteSequence>
+      <Custom Action="WriteDefaultConfig" After="InstallFinalize" Condition="NOT Installed" />
+    </InstallExecuteSequence>
+
+    <!-- 图形化向导：欢迎 → 许可 → 选择安装目录 → 确认 → 进度 → 完成（验收 1）。 -->
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.LicenseRtf)" />
+
+  </Package>
+</Wix>

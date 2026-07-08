@@ -157,6 +157,12 @@ experimental_bearer_token = "__TOKEN__"
   （`com.cx.cli`，reverse-DNS 包标识）与 `COMMAND_NAME`、payload 安装目标
   `INSTALL_PREFIX`（`/usr/local/bin`）；`uninstall.sh` 的 `PKG_IDENTIFIER` 默认值
   必须与之一致（否则 `pkgutil --forget` 找不到收据）。改品牌时三者一并同步。
+- `installer/windows-msi/`（Windows `.msi`）：`cx.wxs` 里的 `Package Name`（ARP 显示名
+  `cx CLI`）、`Manufacturer`（Publisher）、安装目录 `INSTALLFOLDER`（默认目录名 `cx`）、
+  `Environment` 写的用户 PATH、注册表 KeyPath 键 `Software\cx\cx-cli`，以及
+  **`UpgradeCode` GUID**（跨版本升级的稳定标识，改品牌**不要**改它，否则旧版无法被新版
+  自动升级/卸载）。`build-msi.ps1` 里的产物文件名 `cx-<version>-<arch>.msi`、可选签名的
+  `CX_SIGN_PFX_*` 环境变量。
 
 二进制探测名需与 `build.yml` 产物命名对齐（改名时两边同步）。
 

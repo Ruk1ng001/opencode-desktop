@@ -90,6 +90,11 @@
       scripts/postinstall       # 安装后脚本：以登录用户身份幂等写内置渠道 config ✅
       uninstall.sh              # 卸载脚本：移除二进制 + forget 收据（配置默认保留）✅
       README.md                 # 安装/卸载 + Gatekeeper（右键打开/xattr）说明 ✅
+    windows-msi/              # Windows 原生 .msi 安装器（US-011）
+      cx.wxs                    # WiX 源文件：目录/组件/用户PATH/ARP卸载项/安装后幂等写 config 自定义动作 ✅
+      build-msi.ps1             # 构建脚本（调 wix build），只在 Windows 跑；含可选 Authenticode 签名 ✅
+      License.rtf               # 安装向导许可页文本 ✅
+      README.md                 # 安装/卸载 + SmartScreen（仍要运行/Unblock）说明 ✅
   .github/workflows/
     build.yml               # 可复用多平台编译（workflow_call）：submodule→apply-patches→cargo build ✅
     ci.yml                  # CI 入口：校验补丁可应用 + 复用 build.yml 多平台编译 ✅
@@ -184,6 +189,15 @@
   - `README.md`：安装/卸载/Gatekeeper「右键打开」与 `xattr` 去隔离绕过说明
   - 可选签名/公证：`CX_SIGN_IDENTITY`（Developer ID Installer）+ `CX_NOTARIZE_PROFILE`（notarytool）配置了才生效
   - 仅 arm64（与 build.yml 一致，Intel 暂停）；release.yml 新增 `version` + `package_macos` job，`.pkg` 随 Release 分发
+- [x] **Windows 原生安装器 `.msi`** `installer/windows-msi/`（US-011 完成）
+  - `cx.wxs`：WiX Toolset(v5/v4) 源文件，`WixUI_InstallDir` 向导（欢迎→许可→选目录→确认→进度→完成），`Scope="perUser"` 免管理员装到 `%LOCALAPPDATA%\Programs\cx`
+  - PATH：`Environment` 元素写**用户级** PATH（`System="no"`），PowerShell + CMD 新会话都生效；卸载时移除
+  - ARP 卸载入口：MSI 标准机制自动登记 DisplayName/版本/Publisher/卸载命令（`MajorUpgrade` 处理升级）
+  - 配置：安装后 immediate 自定义动作调 `write-default-config.ps1`（US-008）幂等写 `%USERPROFILE%\.codex\config.toml`，`Return="ignore"` 写失败不使整包失败
+  - `build-msi.ps1`：调 `wix build` 组装二进制 + config + writer；定制版本 `0.142.5-cx.1` → MSI 数字版本 `0.142.5.1`；只在 Windows runner 跑
+  - 可选 Authenticode 代码签名：`CX_SIGN_PFX_BASE64` + `CX_SIGN_PFX_PASSWORD` 配置了才 signtool 签名，否则未签名 + README 说明 SmartScreen 绕过
+  - 支持 x64；ARM64 记为可选后续项（`build-msi.ps1` 支持 `-Arch arm64`，CI 当前只产 x64）
+  - `README.md`：安装/卸载/SmartScreen「仍要运行」与 `Unblock-File` 绕过说明；release.yml 新增 `package_windows` job，`.msi` 随 Release 分发
 - [x] **更新跟随流程** `scripts/update.sh`（US-012 完成）
   - `fetch 官方 → 更新 BASE_SHA/BASE_TAG → apply-patches → 冲突则诊断+回滚 → 干净重放 exit 0`
   - 查最新稳定 tag（过滤 alpha/畸形）与当前基线比对；无参已最新则 exit 0，可指定 tag（回滚/复现）
@@ -201,9 +215,10 @@
 - [x] **M1 编译验证**：交给 CI（本机不跑重编译）✅ US-009 落地 `.github/workflows/{build,ci}.yml`；待推 GitHub 后由 CI 实跑
 - [ ] **M2 内置渠道**：验证免登录进入 + 能对话
 - [ ] **M3 补丁**：命令名 + 中文化，重编译验证
-- [ ] **M4 打包分发**：mac + win 安装器 + macOS 原生 `.pkg`（US-010），端到端走一遍
-      —— `.pkg` 打包脚本（`installer/macos-pkg/`）+ release.yml `package_macos` job 已落地，
-      待推 GitHub 后由 CI 在 macos runner 实跑产出并验证双击安装
+- [ ] **M4 打包分发**：mac + win 安装器 + macOS 原生 `.pkg`（US-010）+ Windows 原生 `.msi`（US-011），端到端走一遍
+      —— `.pkg` 打包脚本（`installer/macos-pkg/`）+ release.yml `package_macos` job、
+      `.msi` 打包脚本（`installer/windows-msi/`）+ release.yml `package_windows` job 已落地，
+      待推 GitHub 后由 CI 在 macos / windows runner 实跑产出并验证双击安装
 - [x] **M5 更新机制**：`scripts/update.sh`（US-012）本地实跑四路径通过 + `release.yml`（US-013）自动检测+发布；待推 GitHub 后由定时/手动触发实跑验证
 
 ---
