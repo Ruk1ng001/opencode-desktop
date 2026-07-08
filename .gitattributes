@@ -1,0 +1,8 @@
+# 补丁文件必须逐字节稳定：git apply 依赖上下文行与基线严格一致。
+# Windows runner 默认 core.autocrlf=true，checkout 时会把 LF 转成 CRLF，
+# 导致补丁上下文字节不匹配、apply 失败（见 US-011/CI Windows job）。
+# 标记为 -text，禁止任何行尾转换，保证跨平台 checkout 后仍是纯 LF。
+brand/patches/*.patch -text
+
+# 品牌层脚本走 bash，统一 LF，避免 Windows 上被转成 CRLF 后无法执行。
+*.sh text eol=lf

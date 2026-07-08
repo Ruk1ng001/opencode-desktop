@@ -79,7 +79,11 @@ jobs:
           BASE_SHA="$(tr -d '[:space:]' < brand/BASE_SHA)"
           echo "跟随的官方 release tag: ${BASE_TAG} (${BASE_SHA})"
           rm -rf codex
+          # Windows runner 默认 core.autocrlf=true，会把官方源码 checkout 成 CRLF，
+          # 使我们的纯 LF 补丁上下文对不上、git apply 失败。clone 时强制关掉转换，
+          # 保证源码与补丁都是 LF（父仓库 .gitattributes 已保证补丁文件本身不被转换）。
           git clone --depth 1 --branch "${BASE_TAG}" \
+            --config core.autocrlf=false --config core.eol=lf \
             https://github.com/openai/codex.git codex
           got="$(git -C codex rev-parse HEAD)"
           if [ "${got}" != "${BASE_SHA}" ]; then
