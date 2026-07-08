@@ -11,9 +11,20 @@
 # 导出（改动 opencode/ 后，在 opencode/ 内）：
 #   git -C opencode diff -- <文件...> > brand/patches/NN-<name>.patch
 
-# 独立余额面板界面骨架（US-005）：
-#   - 新增自包含面板组件（余额 / 已用量 / 充值占位，中文，仅依赖 solid-js）；
-#   - 在渲染入口挂载独立悬浮入口，位于聊天 UI 树之外，不改动任何既有聊天组件。
+# 独立余额面板（US-005 骨架 → US-006 接入 new-api 真实余额/用量）：
+#   - 自包含面板组件（余额 / 已用量 / 充值，中文，仅依赖 solid-js）；
+#   - 在渲染入口挂载独立悬浮入口，位于聊天 UI 树之外，不改动任何既有聊天组件；
+#   - US-006 起：打开面板时向 new-api GET /api/user/self 拉取真实 quota/used_quota，
+#     解析并做单位换算，含加载中 / 请求失败 / 未配置凭据 / 就绪四态。
 [01-balance-panel]
 packages/desktop/src/renderer/balance/balance-panel.tsx
 packages/desktop/src/renderer/index.tsx
+
+# 余额面板凭据注入（US-006）：
+#   - 构建期把 US-003 注入的同名渠道变量（NEWAPI_BASE_URL / NEWAPI_API_KEY）经
+#     electron.vite renderer.define 透传到 renderer 的 import.meta.env（浏览器上下文
+#     读不到 process.env）；未注入时为空串，面板显示「未配置凭据」。不硬编码任何值。
+#   - env.d.ts 补上对应的 ImportMetaEnv 类型声明，保证 typecheck 通过。
+[02-balance-newapi]
+packages/desktop/electron.vite.config.ts
+packages/desktop/src/renderer/env.d.ts

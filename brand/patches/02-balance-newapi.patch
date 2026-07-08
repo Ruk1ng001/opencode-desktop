@@ -1,0 +1,47 @@
+diff --git a/packages/desktop/electron.vite.config.ts b/packages/desktop/electron.vite.config.ts
+index 5d25be209..2442b9625 100644
+--- a/packages/desktop/electron.vite.config.ts
++++ b/packages/desktop/electron.vite.config.ts
+@@ -14,6 +14,14 @@ const channel = (() => {
+ 
+ const nodePtyPkg = `@lydell/node-pty-${process.platform}-${process.arch}`
+ 
++// [cx] US-006: 把 US-003 注入的同名渠道变量在构建期喂给 renderer（浏览器上下文读不到
++// process.env）。缺失即空串，余额面板会据此显示「未配置凭据」态。凭据仅内联到打包产物，
++// 与上游 OPENCODE_CHANNEL / VITE_SENTRY_* 的 define 注入方式一致，不改动源码取值逻辑。
++const newapiDefine = {
++  "import.meta.env.NEWAPI_BASE_URL": JSON.stringify(process.env.NEWAPI_BASE_URL ?? ""),
++  "import.meta.env.NEWAPI_API_KEY": JSON.stringify(process.env.NEWAPI_API_KEY ?? ""),
++}
++
+ const sentry =
+   process.env.SENTRY_AUTH_TOKEN && process.env.SENTRY_ORG && process.env.SENTRY_PROJECT
+     ? sentryVitePlugin({
+@@ -91,6 +99,10 @@ const require = __cjs_mod__.createRequire(import.meta.url);
+     },
+   },
+   renderer: {
++    // [cx] US-006: 把 US-003 注入的同名渠道变量透传到 renderer 的 import.meta.env，
++    // 供独立余额面板拉取 new-api 余额/用量用。renderer 是浏览器上下文读不到 process.env，
++    // 故在构建期 define 注入；未注入时为空串，面板据此显示「未配置凭据」。不硬编码任何值。
++    define: newapiDefine,
+     plugins: [appPlugin, sentry],
+     publicDir: "../../../app/public",
+     root: "src/renderer",
+diff --git a/packages/desktop/src/renderer/env.d.ts b/packages/desktop/src/renderer/env.d.ts
+index 6dff3baf1..4f9af6f82 100644
+--- a/packages/desktop/src/renderer/env.d.ts
++++ b/packages/desktop/src/renderer/env.d.ts
+@@ -1,6 +1,12 @@
+ import type { ElectronAPI } from "../preload/types"
+ 
+ declare global {
++  // [cx] US-006: 声明构建期由 electron.vite renderer.define 注入的渠道变量
++  // （复用 US-003 的 NEWAPI_BASE_URL / NEWAPI_API_KEY）。未注入时为空串。
++  interface ImportMetaEnv {
++    readonly NEWAPI_BASE_URL: string
++    readonly NEWAPI_API_KEY: string
++  }
+   interface Window {
+     api: ElectronAPI
+     __OPENCODE__?: {

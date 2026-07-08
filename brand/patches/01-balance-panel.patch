@@ -1,28 +1,104 @@
 diff --git a/packages/desktop/src/renderer/balance/balance-panel.tsx b/packages/desktop/src/renderer/balance/balance-panel.tsx
 new file mode 100644
-index 000000000..c1e416ae2
+index 000000000..933c5aaf6
 --- /dev/null
 +++ b/packages/desktop/src/renderer/balance/balance-panel.tsx
-@@ -0,0 +1,181 @@
-+// [cx] 独立余额面板 —— 界面骨架（US-005，新增文件）
+@@ -0,0 +1,316 @@
++// [cx] 独立余额面板 —— 对接 new-api 取余额/用量（US-006）
 +//
 +// 设计约束（见 TODO.md / 验收标准）：
 +//   - 独立展示区域，与 opencode 原有聊天 UI 组件完全解耦；本文件不 import 任何
 +//     上游 app / session-ui 组件，仅依赖 solid-js，可离线 typecheck。
 +//   - 明确入口：一个独立悬浮按钮「账户」，点击打开全屏浮层面板。
-+//   - 占位区块：余额 / 已用量 / 充值按钮，数据均为**静态占位**，后续故事接入
-+//     真实渠道（new-api）账户接口后替换 PLACEHOLDER 即可。
-+//   - 全部中文文案。
-+//   - 样式用内联对象，不依赖上游 tailwind / 主题变量，保证独立可渲染。
++//   - 打开面板时向 new-api 用户接口（默认 GET /api/user/self）拉取真实余额/用量，
++//     解析 quota / used_quota 做单位换算与中文标注。
++//   - baseURL 与鉴权凭据复用 US-003 注入的同名变量（NEWAPI_BASE_URL / NEWAPI_API_KEY），
++//     经 electron.vite renderer.define 注入到 import.meta.env，本文件不硬编码任何地址/密钥。
++//   - 四种数据状态各有明确提示：加载中 / 请求失败 / 未配置凭据 / 就绪。
++//   - 全部网络请求包在 try/catch 内，任何错误都落入 error 态，绝不抛出，
++//     不阻塞主程序，也不让面板崩溃。
++//   - 全部中文文案。样式用内联对象，不依赖上游 tailwind / 主题变量。
 +
-+import { createSignal, Show } from "solid-js"
++import { createSignal, onMount, Show, Switch, Match } from "solid-js"
 +import type { JSX } from "solid-js"
 +
-+// 静态占位数据。后续接入真实账户接口时替换本常量即可，UI 结构不变。
-+const PLACEHOLDER = {
-+  balance: "¥ 0.00",
-+  used: "¥ 0.00",
-+  updatedAt: "—",
++// new-api 用户接口路径（站点根下，非 /v1 渠道端点）。
++const USER_SELF_PATH = "/api/user/self"
++
++// new-api 默认 QuotaPerUnit：500000 额度 = 1 美元（common.QuotaPerUnit 默认值）。
++// 若目标站点改了该值，展示的货币金额会有偏差——额度原值同时展示以便对照。
++const QUOTA_PER_UNIT = 500000
++
++// 从渠道 baseURL（US-003 的 NEWAPI_BASE_URL，如 https://host/v1）推导 new-api 站点根，
++// 用户接口挂在站点根 /api 下而非 /v1 渠道端点下。
++function deriveApiBase(baseURL: string): string {
++  const trimmed = baseURL.trim().replace(/\/+$/, "")
++  return trimmed.replace(/\/v1$/, "")
++}
++
++// 额度 → 美元金额（两位小数）。
++function formatCurrency(quotaUnits: number): string {
++  return "$" + (quotaUnits / QUOTA_PER_UNIT).toFixed(2)
++}
++
++// 额度原值本地化（千分位）。
++function formatUnits(quotaUnits: number): string {
++  return quotaUnits.toLocaleString("zh-CN")
++}
++
++type BalanceState =
++  | { status: "unconfigured" }
++  | { status: "loading" }
++  | { status: "error"; message: string }
++  | { status: "ready"; quota: number; usedQuota: number }
++
++// new-api 标准响应信封。字段全部可选，做防御性解析。
++type UserSelfResponse = {
++  success?: boolean
++  message?: string
++  data?: {
++    quota?: number
++    used_quota?: number
++  }
++}
++
++// 拉取余额/用量。任何异常都被捕获并转成 error 态返回，本函数永不抛出。
++async function fetchBalance(): Promise<BalanceState> {
++  // 复用 US-003 注入的同名变量（构建期由 renderer.define 从 process.env 注入）。
++  const baseURL = import.meta.env.NEWAPI_BASE_URL ?? ""
++  const apiKey = import.meta.env.NEWAPI_API_KEY ?? ""
++
++  if (!baseURL || !apiKey) return { status: "unconfigured" }
++
++  try {
++    const url = deriveApiBase(baseURL) + USER_SELF_PATH
++    const res = await fetch(url, {
++      headers: {
++        // 鉴权方式「待确认」：new-api UserAuth 接受登录 session 或 Authorization 头
++        // 承载的 access token（并要求 New-Api-User 头匹配用户 id）。此处以渠道凭据
++        // 按标准 Bearer 尝试；若站点要求 session / New-Api-User 头，请求会失败并落入
++        // error 态给出提示——不会崩溃或阻塞主程序。
++        Authorization: `Bearer ${apiKey}`,
++        Accept: "application/json",
++      },
++    })
++    if (!res.ok) return { status: "error", message: `请求返回 HTTP ${res.status}` }
++
++    const body = (await res.json()) as UserSelfResponse
++    if (!body.success || !body.data) {
++      return { status: "error", message: body.message || "接口返回失败" }
++    }
++    return {
++      status: "ready",
++      quota: body.data.quota ?? 0,
++      usedQuota: body.data.used_quota ?? 0,
++    }
++  } catch (error) {
++    return {
++      status: "error",
++      message: error instanceof Error ? error.message : "网络请求失败",
++    }
++  }
 +}
 +
 +const Z_LAUNCHER = 9998
@@ -97,6 +173,20 @@ index 000000000..c1e416ae2
 +  color: "#f5f5f5",
 +}
 +
++const cardSubStyle: JSX.CSSProperties = {
++  "font-size": "12px",
++  color: "#9ca3af",
++  "margin-top": "4px",
++}
++
++const stateBoxStyle: JSX.CSSProperties = {
++  padding: "24px 16px",
++  "text-align": "center",
++  color: "#9ca3af",
++  "font-size": "13px",
++  "line-height": "1.6",
++}
++
 +const closeButtonStyle: JSX.CSSProperties = {
 +  background: "transparent",
 +  border: "none",
@@ -127,8 +217,24 @@ index 000000000..c1e416ae2
 +  "text-align": "center",
 +}
 +
++function BalanceCard(props: { label: string; value: string; sub: string }) {
++  return (
++    <div style={cardStyle}>
++      <div style={cardLabelStyle}>{props.label}</div>
++      <div style={cardValueStyle}>{props.value}</div>
++      <div style={cardSubStyle}>{props.sub}</div>
++    </div>
++  )
++}
++
 +function BalancePanel(props: { onClose: () => void }) {
++  const [state, setState] = createSignal<BalanceState>({ status: "loading" })
 +  const [hint, setHint] = createSignal(false)
++
++  // 打开面板即拉取一次。fetchBalance 内部已捕获所有错误，这里不会抛出。
++  onMount(() => {
++    void fetchBalance().then(setState)
++  })
 +
 +  return (
 +    <div style={overlayStyle} onClick={props.onClose} role="presentation">
@@ -146,15 +252,46 @@ index 000000000..c1e416ae2
 +          </button>
 +        </div>
 +
-+        <div style={cardStyle}>
-+          <div style={cardLabelStyle}>余额</div>
-+          <div style={cardValueStyle}>{PLACEHOLDER.balance}</div>
-+        </div>
++        <Switch>
++          <Match when={state().status === "loading"}>
++            <div style={stateBoxStyle}>正在获取余额…</div>
++          </Match>
 +
-+        <div style={cardStyle}>
-+          <div style={cardLabelStyle}>已用量</div>
-+          <div style={cardValueStyle}>{PLACEHOLDER.used}</div>
-+        </div>
++          <Match when={state().status === "unconfigured"}>
++            <div style={stateBoxStyle}>
++              尚未配置渠道凭据
++              <br />
++              请在打包/启动时注入 NEWAPI_BASE_URL 与 NEWAPI_API_KEY
++            </div>
++          </Match>
++
++          <Match when={state() as Extract<BalanceState, { status: "error" }>} keyed>
++            {(errorState) => (
++              <div style={stateBoxStyle}>
++                获取失败
++                <br />
++                {errorState.message}
++              </div>
++            )}
++          </Match>
++
++          <Match when={state() as Extract<BalanceState, { status: "ready" }>} keyed>
++            {(ready) => (
++              <>
++                <BalanceCard
++                  label="余额"
++                  value={formatCurrency(ready.quota)}
++                  sub={`${formatUnits(ready.quota)} 额度`}
++                />
++                <BalanceCard
++                  label="已用量"
++                  value={formatCurrency(ready.usedQuota)}
++                  sub={`${formatUnits(ready.usedQuota)} 额度`}
++                />
++              </>
++            )}
++          </Match>
++        </Switch>
 +
 +        <button type="button" style={topupButtonStyle} onClick={() => setHint(true)}>
 +          充值
@@ -163,8 +300,6 @@ index 000000000..c1e416ae2
 +        <Show when={hint()}>
 +          <div style={hintStyle}>充值功能即将上线，敬请期待</div>
 +        </Show>
-+
-+        <div style={{ ...hintStyle, "margin-top": "16px" }}>数据为占位示例 · 更新时间 {PLACEHOLDER.updatedAt}</div>
 +      </div>
 +    </div>
 +  )
