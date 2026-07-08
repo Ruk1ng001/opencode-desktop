@@ -1,10 +1,10 @@
 diff --git a/packages/desktop/src/renderer/balance/balance-panel.tsx b/packages/desktop/src/renderer/balance/balance-panel.tsx
 new file mode 100644
-index 000000000..933c5aaf6
+index 000000000..6ca721c8f
 --- /dev/null
 +++ b/packages/desktop/src/renderer/balance/balance-panel.tsx
-@@ -0,0 +1,316 @@
-+// [cx] 独立余额面板 —— 对接 new-api 取余额/用量（US-006）
+@@ -0,0 +1,352 @@
++// [cx] 独立余额面板 —— 对接 new-api 取余额/用量（US-006）+ 充值入口（US-007）
 +//
 +// 设计约束（见 TODO.md / 验收标准）：
 +//   - 独立展示区域，与 opencode 原有聊天 UI 组件完全解耦；本文件不 import 任何
@@ -18,6 +18,9 @@ index 000000000..933c5aaf6
 +//   - 全部网络请求包在 try/catch 内，任何错误都落入 error 态，绝不抛出，
 +//     不阻塞主程序，也不让面板崩溃。
 +//   - 全部中文文案。样式用内联对象，不依赖上游 tailwind / 主题变量。
++//   - US-007 充值入口：面板含「充值」按钮，点击后经 window.api.openLink（→ 主进程
++//     shell.openExternal）在系统默认浏览器打开 new-api 充值页面。充值 URL 走注入变量
++//     NEWAPI_TOPUP_URL，缺省回退到 new-api 站点根。客户端内不实现任何支付逻辑。
 +
 +import { createSignal, onMount, Show, Switch, Match } from "solid-js"
 +import type { JSX } from "solid-js"
@@ -34,6 +37,29 @@ index 000000000..933c5aaf6
 +function deriveApiBase(baseURL: string): string {
 +  const trimmed = baseURL.trim().replace(/\/+$/, "")
 +  return trimmed.replace(/\/v1$/, "")
++}
++
++// [cx] US-007: 解析充值页面 URL。优先用注入变量 NEWAPI_TOPUP_URL（构建期由
++// electron.vite renderer.define 从 process.env 注入），缺省回退到 new-api 站点根
++// （由渠道 baseURL 推导）。两者都缺失时返回空串，此时不渲染充值入口。
++function resolveTopupUrl(): string {
++  const topup = (import.meta.env.NEWAPI_TOPUP_URL ?? "").trim()
++  if (topup) return topup
++  const baseURL = import.meta.env.NEWAPI_BASE_URL ?? ""
++  return deriveApiBase(baseURL)
++}
++
++// [cx] US-007: 在系统默认浏览器打开充值页面。renderer 是浏览器上下文，不能直接调
++// electron shell，走 preload 暴露的 window.api.openLink（→ 主进程 ipc "open-link"
++// → shell.openExternal，见 packages/desktop/src/main/ipc.ts）。客户端内不实现任何
++// 支付逻辑，只负责把充值 URL 交给系统浏览器。
++function openTopup(url: string): void {
++  if (!url) return
++  try {
++    window.api.openLink(url)
++  } catch {
++    // openLink 只是发一条 ipc 消息，正常不会抛出；即便异常也不应让面板崩溃。
++  }
 +}
 +
 +// 额度 → 美元金额（两位小数）。
@@ -229,7 +255,9 @@ index 000000000..933c5aaf6
 +
 +function BalancePanel(props: { onClose: () => void }) {
 +  const [state, setState] = createSignal<BalanceState>({ status: "loading" })
-+  const [hint, setHint] = createSignal(false)
++
++  // [cx] US-007: 充值页面 URL 在组件创建时解析一次（注入变量为构建期常量，不会变）。
++  const topupUrl = resolveTopupUrl()
 +
 +  // 打开面板即拉取一次。fetchBalance 内部已捕获所有错误，这里不会抛出。
 +  onMount(() => {
@@ -293,12 +321,20 @@ index 000000000..933c5aaf6
 +          </Match>
 +        </Switch>
 +
-+        <button type="button" style={topupButtonStyle} onClick={() => setHint(true)}>
++        {/* [cx] US-007: 充值入口。点击经 window.api.openLink 在系统默认浏览器打开充值页面。
++            URL 已配置时按钮可点；未配置（注入变量与站点根都缺失）时禁用并提示。 */}
++        <button
++          type="button"
++          style={topupButtonStyle}
++          disabled={!topupUrl}
++          aria-disabled={!topupUrl}
++          onClick={() => openTopup(topupUrl)}
++        >
 +          充值
 +        </button>
 +
-+        <Show when={hint()}>
-+          <div style={hintStyle}>充值功能即将上线，敬请期待</div>
++        <Show when={!topupUrl}>
++          <div style={hintStyle}>未配置充值地址，请注入 NEWAPI_TOPUP_URL 或 NEWAPI_BASE_URL</div>
 +        </Show>
 +      </div>
 +    </div>

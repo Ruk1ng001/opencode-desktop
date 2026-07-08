@@ -11,19 +11,23 @@
 # 导出（改动 opencode/ 后，在 opencode/ 内）：
 #   git -C opencode diff -- <文件...> > brand/patches/NN-<name>.patch
 
-# 独立余额面板（US-005 骨架 → US-006 接入 new-api 真实余额/用量）：
+# 独立余额面板（US-005 骨架 → US-006 接入 new-api 真实余额/用量 → US-007 充值入口）：
 #   - 自包含面板组件（余额 / 已用量 / 充值，中文，仅依赖 solid-js）；
 #   - 在渲染入口挂载独立悬浮入口，位于聊天 UI 树之外，不改动任何既有聊天组件；
 #   - US-006 起：打开面板时向 new-api GET /api/user/self 拉取真实 quota/used_quota，
 #     解析并做单位换算，含加载中 / 请求失败 / 未配置凭据 / 就绪四态。
+#   - US-007 起：「充值」按钮点击经 window.api.openLink（→ 主进程 shell.openExternal）
+#     在系统默认浏览器打开充值页面；URL 走注入变量 NEWAPI_TOPUP_URL，缺省回退到站点根。
+#     客户端内不实现任何支付逻辑。
 [01-balance-panel]
 packages/desktop/src/renderer/balance/balance-panel.tsx
 packages/desktop/src/renderer/index.tsx
 
-# 余额面板凭据注入（US-006）：
+# 余额面板凭据 / 充值地址注入（US-006 + US-007）：
 #   - 构建期把 US-003 注入的同名渠道变量（NEWAPI_BASE_URL / NEWAPI_API_KEY）经
 #     electron.vite renderer.define 透传到 renderer 的 import.meta.env（浏览器上下文
 #     读不到 process.env）；未注入时为空串，面板显示「未配置凭据」。不硬编码任何值。
+#   - US-007 追加 NEWAPI_TOPUP_URL（充值页面地址），同样经 renderer.define 注入。
 #   - env.d.ts 补上对应的 ImportMetaEnv 类型声明，保证 typecheck 通过。
 [02-balance-newapi]
 packages/desktop/electron.vite.config.ts

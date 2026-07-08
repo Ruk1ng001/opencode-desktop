@@ -1,8 +1,8 @@
 diff --git a/packages/desktop/electron.vite.config.ts b/packages/desktop/electron.vite.config.ts
-index 5d25be209..2442b9625 100644
+index 5d25be209..8a24b20db 100644
 --- a/packages/desktop/electron.vite.config.ts
 +++ b/packages/desktop/electron.vite.config.ts
-@@ -14,6 +14,14 @@ const channel = (() => {
+@@ -14,6 +14,16 @@ const channel = (() => {
  
  const nodePtyPkg = `@lydell/node-pty-${process.platform}-${process.arch}`
  
@@ -12,12 +12,14 @@ index 5d25be209..2442b9625 100644
 +const newapiDefine = {
 +  "import.meta.env.NEWAPI_BASE_URL": JSON.stringify(process.env.NEWAPI_BASE_URL ?? ""),
 +  "import.meta.env.NEWAPI_API_KEY": JSON.stringify(process.env.NEWAPI_API_KEY ?? ""),
++  // [cx] US-007: 充值页面 URL。缺省时余额面板回退到由 NEWAPI_BASE_URL 推导的站点根。
++  "import.meta.env.NEWAPI_TOPUP_URL": JSON.stringify(process.env.NEWAPI_TOPUP_URL ?? ""),
 +}
 +
  const sentry =
    process.env.SENTRY_AUTH_TOKEN && process.env.SENTRY_ORG && process.env.SENTRY_PROJECT
      ? sentryVitePlugin({
-@@ -91,6 +99,10 @@ const require = __cjs_mod__.createRequire(import.meta.url);
+@@ -91,6 +101,10 @@ const require = __cjs_mod__.createRequire(import.meta.url);
      },
    },
    renderer: {
@@ -29,18 +31,20 @@ index 5d25be209..2442b9625 100644
      publicDir: "../../../app/public",
      root: "src/renderer",
 diff --git a/packages/desktop/src/renderer/env.d.ts b/packages/desktop/src/renderer/env.d.ts
-index 6dff3baf1..4f9af6f82 100644
+index 6dff3baf1..0e7beabc4 100644
 --- a/packages/desktop/src/renderer/env.d.ts
 +++ b/packages/desktop/src/renderer/env.d.ts
-@@ -1,6 +1,12 @@
+@@ -1,6 +1,14 @@
  import type { ElectronAPI } from "../preload/types"
  
  declare global {
 +  // [cx] US-006: 声明构建期由 electron.vite renderer.define 注入的渠道变量
 +  // （复用 US-003 的 NEWAPI_BASE_URL / NEWAPI_API_KEY）。未注入时为空串。
++  // [cx] US-007: NEWAPI_TOPUP_URL —— 充值页面地址，缺省时余额面板回退到站点根。
 +  interface ImportMetaEnv {
 +    readonly NEWAPI_BASE_URL: string
 +    readonly NEWAPI_API_KEY: string
++    readonly NEWAPI_TOPUP_URL: string
 +  }
    interface Window {
      api: ElectronAPI
