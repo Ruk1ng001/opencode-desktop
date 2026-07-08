@@ -1,16 +1,19 @@
-# 补丁分组清单：定义每个补丁包含哪些源码文件（相对 codex/ 的路径）。
+# 补丁分组清单：定义每个补丁包含哪些 opencode 源码文件（相对 opencode/ 的路径）。
 # 格式：每段以 [补丁名] 开头，下面列出属于该补丁的文件路径，一行一个。
-# make-patches.sh 按此清单把工作区改动导出成独立的 .patch 文件。
-# 分组的意义：官方更新导致冲突时，只有相关补丁需要重做，互不牵连。
+# 按 NN- 前缀顺序应用到干净的上游基线（brand/BASE_SHA）上。
+#
+# 为什么用补丁层：opencode 以 git submodule 锁定在上游 tag，gitlink 必须保持干净
+# 才能干净跟随上游 release。凡是必须改动 submodule 内源码的定制，都导出为本目录下
+# 的 .patch，由 CI / 本机在 checkout 后重放，做到「submodule 锁上游 + 薄叠加层」。
+#
+# 应用（在 opencode/ 内，基线为 brand/BASE_SHA）：
+#   git -C opencode apply --3way brand/patches/01-balance-panel.patch
+# 导出（改动 opencode/ 后，在 opencode/ 内）：
+#   git -C opencode diff -- <文件...> > brand/patches/NN-<name>.patch
 
-# 命令改名：主命令 codex → cx（bin_name / override_usage / 顶层描述 + npm bin key）
-[01-rename-cx]
-codex-rs/cli/src/main.rs
-codex-cli/package.json
-
-# 品牌层中文化：欢迎语、信任目录提示、登录项、输入框占位提示译为中文（US-006）。
-[02-brand-i18n]
-codex-rs/tui/src/onboarding/welcome.rs
-codex-rs/tui/src/onboarding/trust_directory.rs
-codex-rs/tui/src/onboarding/auth.rs
-codex-rs/tui/src/chatwidget.rs
+# 独立余额面板界面骨架（US-005）：
+#   - 新增自包含面板组件（余额 / 已用量 / 充值占位，中文，仅依赖 solid-js）；
+#   - 在渲染入口挂载独立悬浮入口，位于聊天 UI 树之外，不改动任何既有聊天组件。
+[01-balance-panel]
+packages/desktop/src/renderer/balance/balance-panel.tsx
+packages/desktop/src/renderer/index.tsx
