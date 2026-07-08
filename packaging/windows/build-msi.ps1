@@ -69,10 +69,13 @@ foreach ($f in @($wxs, $writer, $license)) {
 }
 
 # ── MSI 数字版本 ────────────────────────────────────────────────────
-# MSI 的 ProductVersion 只接受 a.b.c[.d] 且各段为数字。把定制版本 0.142.5-cx.1
+# MSI 的 ProductVersion 只接受 a.b.c[.d] 且各段为数字。把定制版本 v0.142.5-cx.1
 # 转成 0.142.5.1：取 -cx. 前的三段数字 + -cx.N 的 N 作第四段。
+# 定制版本沿用上游 tag 的 `v` 前缀（release.yml 的 custom_tag = v<上游版本>-cx.N），
+# 故正则容忍可选的前导 `v`；MSI 数字版本剥掉它，其余落点（文件名 / DisplayVersion /
+# release tag）仍保留完整的 v0.142.5-cx.1。
 $msiVersion = $null
-if ($Version -match '^(?<base>[0-9]+\.[0-9]+\.[0-9]+)(?:-cx\.(?<n>[0-9]+))?') {
+if ($Version -match '^v?(?<base>[0-9]+\.[0-9]+\.[0-9]+)(?:-cx\.(?<n>[0-9]+))?') {
     $base = $Matches['base']
     $n = if ($Matches.ContainsKey('n') -and $Matches['n']) { $Matches['n'] } else { "0" }
     $msiVersion = "$base.$n"
