@@ -8,10 +8,57 @@
 | 路径 | 作用 | 是否含真实值 |
 |---|---|---|
 | `BASE_TAG` / `BASE_SHA` | 上游基线双文件：锁定的上游 tag 与对应 commit SHA，二者同步更新。 | 否 |
-| `brand.json` | 品牌配置：产品名、命令名、渠道展示名、默认模型等**非密钥**定制值。 | 否 |
+| `brand.json` | 品牌配置：产品名、appId、命令名、渠道展示名、默认模型等**非密钥**定制值，是品牌值的单一数据源。 | 否 |
+| `electron-builder.brand.ts` | 品牌打包覆盖：import 上游 `electron-builder.config.ts` 后 spread 覆盖 `productName` / `appId` / 图标路径 / 由 appId 派生的 Linux 身份，不碰上游源码。 | 否 |
 | `opencode.template.json` | 内置渠道模板：opencode.json 格式，`provider.newapi` 走 `@ai-sdk/openai-compatible`（命中 `/v1/chat/completions`），含 opencode 原生 `{env:NEWAPI_BASE_URL}` / `{env:NEWAPI_API_KEY}` / `{env:NEWAPI_MODEL}` 占位，运行时替换。 | 否（仅占位符） |
 | `channel.env.example` | 渠道环境变量**示例**：列出所需变量名与假值，复制为 `channel.env` 后填真实值本地使用。 | 否（仅示例值） |
-| `icons/` | 品牌图标资源。 | 否 |
+| `icons/` | 品牌图标资源（`icon.icns` / `icon.ico` / `icon.png`，当前为占位图标）。 | 否 |
+
+## 品牌打包（改名 / 图标 / appId）
+
+`electron-builder.brand.ts` 从 `brand.json` 读取 `productName` / `appId`，import 上游
+已解析的 `electron-builder.config.ts` 后 spread 覆盖品牌字段：
+
+- `appId`：上游恒以 `ai.opencode.desktop` 开头（prod 无后缀，dev/beta 带 `.dev` / `.beta`），
+  覆盖层用**前缀替换**平移到 `brand.appId` 并保留通道后缀。
+- `productName`：上游形如 `OpenCode` / `OpenCode Dev` / `OpenCode Beta`，同样按前缀替换。
+- 图标：`mac.icon` → `icons/icon.icns`、`win.icon` / `nsis.installerIcon` → `icons/icon.ico`、
+  `linux.icon` → `icons/`（目录，electron-builder 自行挑尺寸）。路径用 `import.meta.url`
+  取绝对路径，不受调用 CWD 影响。
+- Linux 身份：`extraMetadata.desktopName` / `linux.executableName` / `StartupWMClass`
+  均由新 `appId` 派生，同步覆盖以保持窗口类与启动器一致。
+
+打包命令（在 `opencode/packages/desktop/` 下，`--config` 指向本覆盖文件）：
+
+```sh
+cd opencode/packages/desktop
+OPENCODE_CHANNEL=prod bun run electron-builder --config ../../../brand/electron-builder.brand.ts
+```
+
+> 类型检查：覆盖文件本身通过 `Configuration` 类型检查（`strict` 模式）。上游 `getConfig()`
+> 未标注返回类型，`publish.provider` 等字面量被推断为宽泛 `string`，与 `Publish` 联合类型
+> 不兼容——覆盖层将 import 的 base 断言回 `Configuration` 收窄类型即可，运行时结构不变。
+
+### 技术风险 #2：`--config` 能否干净覆盖（最小补丁记录）
+
+上游 `packages/desktop/package.json` 的 `package` 系列脚本**写死**了配置路径：
+
+```json
+"package":       "electron-builder --config electron-builder.config.ts",
+"package:mac":   "electron-builder --mac --config electron-builder.config.ts",
+"package:win":   "electron-builder --win --config electron-builder.config.ts",
+"package:linux": "electron-builder --linux --config electron-builder.config.ts"
+```
+
+因此**不能**通过 `bun run package` 走品牌覆盖。两条落地路径：
+
+1. **推荐（零补丁）**：CI / 本地打包**绕过 npm script**，直接调 electron-builder 并显式指定
+   `--config ../../../brand/electron-builder.brand.ts`（见上方命令）。品牌覆盖文件 import 上游
+   config 后 spread，`electron-builder` 支持 `.ts` 配置，完全不改上游源码即可干净覆盖。
+2. **需要 `bun run package` 时的最小补丁**：仅当必须复用上游 npm script 时，改
+   `package.json` 中 4 行 `--config` 目标为 `../../../brand/electron-builder.brand.ts`
+   （或经环境变量参数化）。这是唯一需要触碰上游的改动，属**单文件 4 行**的最小补丁，
+   与「不改源码」哲学冲突，故默认走路径 1、不引入此补丁。
 
 ## 真实值从哪来
 

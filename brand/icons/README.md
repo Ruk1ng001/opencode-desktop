@@ -12,5 +12,10 @@
 | `icon.ico` | 应用图标 | Windows |
 | `icon.png` | 应用图标（1024×1024 源图） | 通用 / Linux |
 
-> 尚未放入真实图标前，本目录仅含此说明。图标为二进制资源，不含任何密钥，
-> 可安全提交进 git。
+> 当前为**占位图标**（纯色 1024×1024，各格式自包含合法）：`icon.png` / `icon.ico`
+> / `icon.icns` 均可被 electron-builder 直接消费，替换为正式品牌图标时保持文件名即可。
+> 图标为二进制资源，不含任何密钥，可安全提交进 git。
+>
+> `brand/electron-builder.brand.ts` 用 `import.meta.url` 计算本目录的**绝对路径**再
+> 覆盖 `mac.icon` / `win.icon` / `nsis.installerIcon` / `linux.icon`，因此不受打包
+> 时工作目录影响。
