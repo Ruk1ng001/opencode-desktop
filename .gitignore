@@ -4,12 +4,16 @@
 /brand/channel.env
 
 # ── 渲染产物（本地 config 实例）────────────────────────────
-# render-config.sh 把模板占位符替换成真实值生成，含 token，不进 git。
-# 默认输出 brand/config.toml；打包时会把成品 config.toml 放到 installer/ 或 dist/
+# render 脚本把模板占位符替换成真实值生成，含 token，不进 git。
+# 默认输出 brand/opencode.json；打包时会把成品 opencode.json 放到 installer/ 或 dist/
 # 供安装器随包分发——这些「本地 config 实例」都含真实 token，一律忽略。
-/brand/config.toml
+/brand/opencode.json
 /dist/
-/installer/config.toml
+/installer/opencode.json
+
+# ── 本地覆盖值 ────────────────────────────────────────────
+# 任意 *.local 文件视为个人本地覆盖（可能含真实值），一律忽略。
+*.local
 
 # ── auth / 密钥文件 ───────────────────────────────────────
 # codex 登录后在配置目录写 auth.json（含 access token / API key）；
