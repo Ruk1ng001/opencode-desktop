@@ -1,13 +1,18 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "//": "内置渠道配置模板：安装器/启动器首次运行时把渲染后的内容写入用户全局 opencode.json（幂等，不覆盖已有配置）。三处占位符（__BASE_URL__ / __API_KEY__ / __MODEL__）在打包期由渲染脚本从 CI Secret 或本地 brand/channel.env 替换成真实值；真实值来源见 brand/channel.env.example。",
-  "model": "newapi/__MODEL__",
+  "model": "newapi/{env:NEWAPI_MODEL}",
   "provider": {
     "newapi": {
+      "npm": "@ai-sdk/openai-compatible",
       "name": "内置渠道",
       "options": {
-        "baseURL": "__BASE_URL__",
-        "apiKey": "__API_KEY__"
+        "baseURL": "{env:NEWAPI_BASE_URL}",
+        "apiKey": "{env:NEWAPI_API_KEY}"
+      },
+      "models": {
+        "{env:NEWAPI_MODEL}": {
+          "name": "内置模型"
+        }
       }
     }
   }
