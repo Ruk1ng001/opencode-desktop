@@ -186,51 +186,29 @@ jobs:
       # 编译「基线更新后」的 commit，使 build.yml 读到新的 brand/BASE_TAG / BASE_SHA。
       ref: ${{ needs.detect.outputs.ref }}
 
-  # —— 3. 计算定制版本号 → 创建 GitHub Release ——
-  release:
-    name: 创建 GitHub Release
-    needs: [detect, build]
+  # —— 3. 计算定制版本号（单点计算，供打包与发布共用） ——
+  version:
+    name: 计算定制版本号
+    needs: detect
     if: needs.detect.outputs.should_release == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     permissions:
-      contents: write   # 创建 release / tag
+      contents: read
+    outputs:
+      custom_tag: ${{ steps.ver.outputs.custom_tag }}
     steps:
-      - name: Checkout（基线更新后的 commit，使 release tag 指向它）
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ needs.detect.outputs.ref }}
-
-      - name: 下载三平台编译产物
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: release-*
-          path: artifacts
-
-      # 按目标三元组重命名，与安装器（US-010/011）探测的文件名对齐。
-      - name: 归置发布资产（按平台命名）
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p release-assets
-          # macOS Intel（x86_64-apple-darwin）暂时关闭，见 build.yml 矩阵注释。
-          # 恢复方式：取消下面 Intel 相关行的注释，并恢复 build.yml / install.sh 对应开关。
-          # cp artifacts/release-x86_64-apple-darwin/cx        release-assets/cx-x86_64-apple-darwin
-          cp artifacts/release-aarch64-apple-darwin/cx       release-assets/cx-aarch64-apple-darwin
-          cp artifacts/release-x86_64-pc-windows-msvc/cx.exe release-assets/cx-x86_64-pc-windows-msvc.exe
-          chmod +x release-assets/cx-aarch64-apple-darwin
-          ls -lh release-assets
-
-      - name: 计算定制版本号 + 创建 Release
+      - name: 计算 v<上游版本>-cx.N
+        id: ver
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           UPSTREAM_TAG: ${{ needs.detect.outputs.upstream_tag }}
         shell: bash
         run: |
           set -euo pipefail
           # 上游 tag → 基础版本号：rust-v0.142.5 → v0.142.5
           base_ver="${UPSTREAM_TAG#rust-}"
-
           # 查已有的 v<ver>-cx.N 定制发布，取最大 N，本次 N+1（同上游版本再发则递增）。
           pat="^$(printf '%s' "$base_ver" | sed 's/[.]/\\./g')-cx\.[0-9]+$"
           max=0
@@ -242,6 +220,113 @@ jobs:
           next=$((max + 1))
           custom_tag="${base_ver}-cx.${next}"
           echo "上游 tag：${UPSTREAM_TAG} → 定制版本：${custom_tag}"
+          echo "custom_tag=$custom_tag" >> "$GITHUB_OUTPUT"
+
+  # —— 4. 在 macOS runner 上构建原生 .pkg（US-010） ——
+  # pkgbuild/productbuild 是 macOS 专有工具，必须在 macos runner 跑。
+  # 这一步会把渠道 config（含 token）渲染进 pkg，故只在发布流程里做，且经 Secret 注入。
+  package_macos:
+    name: 构建 macOS .pkg
+    needs: [detect, build, version]
+    if: needs.detect.outputs.should_release == 'true'
+    runs-on: macos-14
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout（基线更新后的 commit，取到 installer/ 与 brand/ 脚本）
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.detect.outputs.ref }}
+          persist-credentials: false
+
+      - name: 下载 arm64 编译产物
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-aarch64-apple-darwin
+          path: dist
+
+      # render-config.sh 用了 declare -A（bash 4+），macOS 自带 /bin/bash 是 3.2。
+      - name: 安装现代 bash（供 render-config.sh 使用）
+        run: brew install bash
+
+      - name: 渲染成品 config（占位符 → 真实渠道值，经 Secret 注入）
+        env:
+          CX_BASE_URL: ${{ secrets.CX_BASE_URL }}
+          CX_TOKEN: ${{ secrets.CX_TOKEN }}
+          CX_MODEL: ${{ secrets.CX_MODEL }}
+        run: bash scripts/render-config.sh dist/config.toml
+
+      - name: 构建 .pkg（payload → /usr/local/bin/cx + postinstall 写 config）
+        env:
+          CX_VERSION: ${{ needs.version.outputs.custom_tag }}
+          # 可选签名/公证：配置了对应 Secret 才生效，否则产出未签名 .pkg。
+          CX_SIGN_IDENTITY: ${{ secrets.CX_SIGN_IDENTITY }}
+          CX_NOTARIZE_PROFILE: ${{ secrets.CX_NOTARIZE_PROFILE }}
+        run: |
+          set -euo pipefail
+          chmod +x dist/cx
+          bash installer/macos-pkg/build-pkg.sh \
+            --binary dist/cx \
+            --config dist/config.toml \
+            --version "$CX_VERSION" \
+            --arch arm64 \
+            --out "dist/cx-${CX_VERSION}-arm64.pkg"
+
+      - name: 上传 .pkg 产物
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: release-macos-pkg
+          path: dist/cx-*.pkg
+          if-no-files-found: error
+
+  # —— 5. 汇总产物 → 创建 GitHub Release ——
+  release:
+    name: 创建 GitHub Release
+    needs: [detect, build, version, package_macos]
+    if: needs.detect.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write   # 创建 release / tag
+    steps:
+      - name: Checkout（基线更新后的 commit，使 release tag 指向它）
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.detect.outputs.ref }}
+
+      - name: 下载三平台编译产物 + macOS .pkg
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-*
+          path: artifacts
+
+      # 按目标三元组重命名，与安装器（US-010/011）探测的文件名对齐；.pkg 保留原名。
+      - name: 归置发布资产（按平台命名）
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          # macOS Intel（x86_64-apple-darwin）暂时关闭，见 build.yml 矩阵注释。
+          # 恢复方式：取消下面 Intel 相关行的注释，并恢复 build.yml / install.sh 对应开关。
+          # cp artifacts/release-x86_64-apple-darwin/cx        release-assets/cx-x86_64-apple-darwin
+          cp artifacts/release-aarch64-apple-darwin/cx       release-assets/cx-aarch64-apple-darwin
+          cp artifacts/release-x86_64-pc-windows-msvc/cx.exe release-assets/cx-x86_64-pc-windows-msvc.exe
+          chmod +x release-assets/cx-aarch64-apple-darwin
+          # macOS 原生安装包（US-010），文件名含版本，直接透传。
+          cp artifacts/release-macos-pkg/cx-*.pkg release-assets/
+          ls -lh release-assets
+
+      - name: 创建 Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPSTREAM_TAG: ${{ needs.detect.outputs.upstream_tag }}
+          CUSTOM_TAG: ${{ needs.version.outputs.custom_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          custom_tag="$CUSTOM_TAG"
+          echo "上游 tag：${UPSTREAM_TAG} → 定制版本：${custom_tag}"
 
           git_sha="$(git rev-parse HEAD)"
 
@@ -252,18 +337,20 @@ jobs:
           - 上游 release tag：\`${UPSTREAM_TAG}\`（openai/codex）
           - 本次定制版本：\`${custom_tag}\`
 
-          ## 包含产物（裸二进制）
-          - \`cx-aarch64-apple-darwin\`（macOS Apple Silicon）
-          - \`cx-x86_64-pc-windows-msvc.exe\`（Windows x64）
+          ## 包含产物
+          - \`cx-${custom_tag}-arm64.pkg\`（macOS Apple Silicon 原生安装包，双击安装）
+          - \`cx-aarch64-apple-darwin\`（macOS Apple Silicon 裸二进制，配合 install.sh）
+          - \`cx-x86_64-pc-windows-msvc.exe\`（Windows x64 裸二进制，配合 install.ps1）
 
           > macOS Intel（x86_64）因 CI runner 资源紧张暂时未发布。
 
-          安装参见仓库 \`installer/\` 下的 install.sh（Mac）/ install.ps1（Windows）。
+          macOS 用户推荐下载 \`.pkg\` 双击安装。安装/卸载与 Gatekeeper 说明见
+          \`installer/macos-pkg/README.md\`。裸二进制安装参见 \`installer/\` 下的
+          install.sh（Mac）/ install.ps1（Windows）。
           EOF
 
           gh release create "$custom_tag" \
-            release-assets/cx-aarch64-apple-darwin \
-            release-assets/cx-x86_64-pc-windows-msvc.exe \
+            release-assets/* \
             --title "$custom_tag" \
             --notes-file /tmp/release-notes.md \
             --target "$git_sha"

@@ -85,6 +85,11 @@
     install.ps1               # Windows 安装器：本地二进制 + 写 config + 加 PATH + 命令名 cx ✅
     write-default-config.sh   # 首启动幂等写入 config.toml（Mac/Linux）✅
     write-default-config.ps1  # 首启动幂等写入 config.toml（Windows，与 .sh 行为对齐）✅
+    macos-pkg/                # macOS 原生 .pkg 安装包（US-010）
+      build-pkg.sh              # pkgbuild+productbuild 构建 .pkg（payload→/usr/local/bin/cx + postinstall 写 config，可选签名/公证）✅
+      scripts/postinstall       # 安装后脚本：以登录用户身份幂等写内置渠道 config ✅
+      uninstall.sh              # 卸载脚本：移除二进制 + forget 收据（配置默认保留）✅
+      README.md                 # 安装/卸载 + Gatekeeper（右键打开/xattr）说明 ✅
   .github/workflows/
     build.yml               # 可复用多平台编译（workflow_call）：submodule→apply-patches→cargo build ✅
     ci.yml                  # CI 入口：校验补丁可应用 + 复用 build.yml 多平台编译 ✅
@@ -172,6 +177,13 @@
   - 本地二进制（`-Binary`/`CX_BINARY`/按架构自动探测 `cx-<target>.exe`）+ 调 `write-default-config.ps1` 写 config + 命令名 `cx`
   - 支持 x64（`x86_64-pc-windows-msvc`）与 arm64（`aarch64-pc-windows-msvc`）
   - 二进制装成 `$CX_INSTALL_DIR`（默认 `%LOCALAPPDATA%\Programs\cx\bin`）下单文件 `cx.exe`；PATH 写用户环境变量，PowerShell + CMD 新会话都生效
+- [x] **macOS 原生安装包 `.pkg`** `installer/macos-pkg/`（US-010 完成）
+  - `build-pkg.sh`：`pkgbuild`（payload → `/usr/local/bin/cx`，0755）+ `productbuild`（distribution.xml 向导）产出可双击 `.pkg`；只在 macOS runner 跑
+  - `scripts/postinstall`：以登录 GUI 用户（`stat -f%Su /dev/console`）身份调 `write-default-config.sh` 幂等写 `~/.codex/config.toml`（复用 US-008 契约，不覆盖用户配置）
+  - `uninstall.sh`：移除 `/usr/local/bin/cx` + `pkgutil --forget`；配置默认保留（`--purge-config` 才删）
+  - `README.md`：安装/卸载/Gatekeeper「右键打开」与 `xattr` 去隔离绕过说明
+  - 可选签名/公证：`CX_SIGN_IDENTITY`（Developer ID Installer）+ `CX_NOTARIZE_PROFILE`（notarytool）配置了才生效
+  - 仅 arm64（与 build.yml 一致，Intel 暂停）；release.yml 新增 `version` + `package_macos` job，`.pkg` 随 Release 分发
 - [x] **更新跟随流程** `scripts/update.sh`（US-012 完成）
   - `fetch 官方 → 更新 BASE_SHA/BASE_TAG → apply-patches → 冲突则诊断+回滚 → 干净重放 exit 0`
   - 查最新稳定 tag（过滤 alpha/畸形）与当前基线比对；无参已最新则 exit 0，可指定 tag（回滚/复现）
@@ -189,7 +201,9 @@
 - [x] **M1 编译验证**：交给 CI（本机不跑重编译）✅ US-009 落地 `.github/workflows/{build,ci}.yml`；待推 GitHub 后由 CI 实跑
 - [ ] **M2 内置渠道**：验证免登录进入 + 能对话
 - [ ] **M3 补丁**：命令名 + 中文化，重编译验证
-- [ ] **M4 打包分发**：mac + win 安装器，端到端走一遍
+- [ ] **M4 打包分发**：mac + win 安装器 + macOS 原生 `.pkg`（US-010），端到端走一遍
+      —— `.pkg` 打包脚本（`installer/macos-pkg/`）+ release.yml `package_macos` job 已落地，
+      待推 GitHub 后由 CI 在 macos runner 实跑产出并验证双击安装
 - [x] **M5 更新机制**：`scripts/update.sh`（US-012）本地实跑四路径通过 + `release.yml`（US-013）自动检测+发布；待推 GitHub 后由定时/手动触发实跑验证
 
 ---

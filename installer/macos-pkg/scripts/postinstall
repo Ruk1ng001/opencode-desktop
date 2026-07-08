@@ -1,0 +1,65 @@
+#!/bin/bash
+# postinstall —— macOS .pkg 安装器的安装后脚本（US-010）。
+#
+# 由 macOS Installer 在把 payload（/usr/local/bin/cx）铺好后、以 root 身份运行。
+# 职责：幂等地把打包期注入的内置渠道 config 写入「登录 GUI 用户」的
+#       ~/.codex/config.toml（US-019），不覆盖用户已有配置。
+#
+# ── 为什么不能直接用 $HOME ─────────────────────────────────────────
+#   postinstall 以 root 运行，$HOME 是 root 的家目录，而我们要写的是当前登录用户的
+#   ~/.codex。用 `stat -f%Su /dev/console` 找出登录 GUI 用户，再以该用户身份运行
+#   installer/write-default-config.sh（复用其幂等契约，见 US-008），保证生成文件
+#   归该用户所有、落在其 ~/.codex 下。
+#
+# ── 幂等来源 ───────────────────────────────────────────────────────
+#   config.toml 与 write-default-config.sh 由 build-pkg.sh 复制进本脚本同目录
+#   （pkg 的 scripts 段），运行时可直接引用。config.toml 已由打包期
+#   render-config.sh 渲染（占位符替换为真实渠道值），含 token，属敏感文件。
+#
+# 失败策略：内置配置写入失败只 warn 不中止安装——二进制已装好，cx 仍可用，
+#           用户可事后手动配置；不因 config 小问题让整包安装报失败。
+set -u
+
+here="$(cd "$(dirname "$0")" && pwd)"
+writer="$here/write-default-config.sh"
+config_src="$here/config.toml"
+
+log()  { echo "[cx-pkg] $*"; }
+warn() { echo "[cx-pkg] $*" >&2; }
+
+# 找出真正的登录 GUI 用户（不是 root）。
+console_user="$(/usr/bin/stat -f%Su /dev/console 2>/dev/null || true)"
+case "$console_user" in
+  "" | root | _mbsetupuser | loginwindow)
+    warn "无法确定登录用户（当前: '${console_user:-空}'），跳过内置渠道配置写入。"
+    warn "首次运行 cx 前，请手动把内置渠道配置写入 ~/.codex/config.toml。"
+    exit 0
+    ;;
+esac
+
+# 解析该用户的家目录（优先用目录服务记录，回退到 /Users/<user>）。
+user_home="$(/usr/bin/dscl . -read "/Users/$console_user" NFSHomeDirectory 2>/dev/null | /usr/bin/awk '{print $2}')"
+if [ -z "$user_home" ] || [ ! -d "$user_home" ]; then
+  user_home="/Users/$console_user"
+fi
+codex_home="$user_home/.codex"
+
+if [ ! -f "$writer" ] || [ ! -f "$config_src" ]; then
+  warn "缺少 $writer 或 $config_src，跳过内置渠道配置写入。"
+  exit 0
+fi
+
+log "为登录用户 $console_user 幂等写入内置渠道配置到 $codex_home/config.toml"
+
+# 以登录用户身份运行 writer：显式传 HOME/CODEX_HOME，保证写入其 ~/.codex 且归其所有。
+# write-default-config.sh 只用到 POSIX 特性（无 declare -A/mapfile），系统 /bin/bash 3.2 即可跑。
+if /usr/bin/sudo -u "$console_user" /usr/bin/env \
+      HOME="$user_home" CODEX_HOME="$codex_home" \
+      /bin/bash "$writer" "$config_src"; then
+  log "内置渠道配置写入完成。"
+else
+  rc=$?
+  warn "内置渠道配置写入失败（退出码 $rc）。cx 已安装可用，请手动配置 ~/.codex/config.toml。"
+fi
+
+exit 0

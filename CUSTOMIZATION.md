@@ -153,6 +153,10 @@ experimental_bearer_token = "__TOKEN__"
   默认安装目录、二进制探测名 `cx-<target>`、命令名 `cx`。
 - `installer/install.ps1`（Windows）：默认安装目录 `%LOCALAPPDATA%\Programs\cx\bin`、
   二进制探测名 `cx-<target>.exe`、用户 PATH 环境变量、命令名 `cx`。
+- `installer/macos-pkg/`（macOS `.pkg`）：`build-pkg.sh` 顶部的 `PKG_IDENTIFIER`
+  （`com.cx.cli`，reverse-DNS 包标识）与 `COMMAND_NAME`、payload 安装目标
+  `INSTALL_PREFIX`（`/usr/local/bin`）；`uninstall.sh` 的 `PKG_IDENTIFIER` 默认值
+  必须与之一致（否则 `pkgutil --forget` 找不到收据）。改品牌时三者一并同步。
 
 二进制探测名需与 `build.yml` 产物命名对齐（改名时两边同步）。
 
