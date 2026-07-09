@@ -54,6 +54,13 @@
 #     环），在「未失败、有凭据」的本地 key 里按列表顺序轮转挑下一个，channelKeysSetActive + 拉 /v1/models
 #     落盘后给顶部提示条（切到哪个 key + 立即重启，因 config 启动期一次性注入须重启生效，US-002）；所有
 #     key 都不可用时给红色「不再重试」提示。纯 renderer，不改上游聊天组件、不新增 IPC。
+#   - US-013（cx:// 深链一键导入）：BalanceLauncher 监听 renderer index.tsx 派发的
+#     opencode:deep-link CustomEvent（detail.urls），用 parseImportDeepLink 从中筛出 cx://
+#     导入链接（格式 cx://import-key?key=sk-…&label=…&baseURL=https://host/v1，校验 key 非空、
+#     baseURL 须为可解析 http(s) 否则丢弃回退内置）。命中后弹 ImportDialog 确认框（验收 #3：
+#     展示 label / 打码 key / baseURL，用户确认后才 channelKeysAdd 写入，避免恶意深链静默写入）；
+#     写入成功转「成功」态，提示可「设为激活」（验收 #4：channelKeysSetActive + 拉 /v1/models 落盘
+#     + 提示重启内核生效）。cx:// 协议注册在主进程（见 06-deeplink-cx），renderer 侧只解析/确认/写入。
 [01-balance-panel]
 packages/desktop/src/renderer/balance/balance-panel.tsx
 packages/desktop/src/renderer/index.tsx
@@ -120,3 +127,16 @@ packages/desktop/src/main/store-keys.ts
 packages/desktop/src/main/ipc.ts
 packages/desktop/src/preload/index.ts
 packages/desktop/src/preload/types.ts
+
+# cx:// 深链协议注册（US-013）：
+#   - 主进程注册本项目自定义的 cx:// 深链协议（网站「一键导入 key」入口），复用上游 opencode
+#     既有的一整套 deep-link 分发机制（open-url / second-instance → emitDeepLinks →
+#     sendDeepLinks → renderer 派发 opencode:deep-link CustomEvent），不新造分发通路。
+#   - main/index.ts 两处改动：① app.setAsDefaultProtocolClient("cx")（紧邻上游 "opencode"
+#     注册）声明 cx:// 归本 App；② second-instance 的 argv 过滤追加识别 cx:// 前缀
+#     （macOS 的 open-url 不过滤 scheme，cx:// 天然可用，无需改）。
+#   - 解析 / 确认 / 写入全在 renderer 侧（01 补丁 balance-panel.tsx 的 parseImportDeepLink +
+#     ImportDialog）——主进程只注册协议与透传 URL，不碰 key 明文。独立于 01-05 的文件（仅改
+#     main/index.ts），按 NN 序在其后应用。
+[06-deeplink-cx]
+packages/desktop/src/main/index.ts

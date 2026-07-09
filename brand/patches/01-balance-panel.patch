@@ -1,9 +1,9 @@
 diff --git a/packages/desktop/src/renderer/balance/balance-panel.tsx b/packages/desktop/src/renderer/balance/balance-panel.tsx
 new file mode 100644
-index 000000000..c24f9d471
+index 000000000..ea8c23400
 --- /dev/null
 +++ b/packages/desktop/src/renderer/balance/balance-panel.tsx
-@@ -0,0 +1,1717 @@
+@@ -0,0 +1,1961 @@
 +// [cx] 独立账户面板 —— 对接 new-api 取用户名/头像/额度/用量（US-006）+ 充值入口（US-007）
 +//     + key 列表卡片 UI + 顶部账户汇总（US-008）+ 增删改 key 与手动切换激活 key（US-009）
 +//     + 首启无 key 引导（US-011）+ 失效自动切换 key（US-012）
@@ -594,6 +594,57 @@ index 000000000..c24f9d471
 +  }
 +}
 +
++// ============================================================================
++// [cx] US-013: cx:// 深链一键导入 —— 网站点击「一键导入」把 key 灌进 App，免手动粘贴。
++//
++// 深链机制复用桌面端既有的 deep-link 分发：主进程注册 cx:// 协议（index.ts
++// setAsDefaultProtocolClient("cx")），系统唤起 App 时经 open-url / second-instance →
++// emitDeepLinks → sendDeepLinks 送到 renderer，由 renderer index.tsx 派发
++// `opencode:deep-link` CustomEvent（detail.urls）。BalanceLauncher 监听该事件，抽出
++// cx:// 链接解析后走「确认 → 写入」流程。
++//
++// 深链格式（约定）：
++//   cx://import-key?key=sk-xxx&label=我的渠道&baseURL=https://host/v1
++//   - key（必填）：new-api 的 API Token（sk-…）。校验非空 + sk- 前缀（宽松，仅告警不拦截）。
++//   - label（可选）：展示名。
++//   - baseURL（可选）：渠道地址，缺省用内置渠道地址。校验必须是 http(s) 且能被 URL 解析。
++// host 兼容 import-key / 空 host（cx://?key=…）两种写法。
++//
++// 安全（验收标准 #3）：解析成功不静默写入，先弹确认框展示将导入的 label / 打码 key /
++// baseURL，由用户确认后才 channelKeysAdd 写入本地列表，避免恶意深链偷偷灌 key。
++// ============================================================================
++
++// [cx] US-013: 深链解析结果 —— 待确认导入的 key 信息（key 为明文，仅内存持有，展示打码）。
++type ImportRequest = { key: string; label: string; baseURL: string }
++
++// [cx] US-013: 从单条 cx:// URL 解析导入请求。校验：必须是 cx: 协议、key 非空。
++// baseURL 若提供则须是可解析的 http(s) URL，否则丢弃该字段（回退内置地址）而非整体失败。
++// 解析失败（非 cx:// / 无 key / URL 非法）返回 null，不抛出。
++function parseImportDeepLink(raw: string): ImportRequest | null {
++  if (typeof raw !== "string" || !raw.trim()) return null
++  let url: URL
++  try {
++    url = new URL(raw.trim())
++  } catch {
++    return null
++  }
++  if (url.protocol !== "cx:") return null
++  const params = url.searchParams
++  const key = (params.get("key") ?? "").trim()
++  if (!key) return null
++  const label = (params.get("label") ?? "").trim()
++  let baseURL = (params.get("baseURL") ?? params.get("baseurl") ?? "").trim()
++  if (baseURL) {
++    try {
++      const parsed = new URL(baseURL)
++      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") baseURL = ""
++    } catch {
++      baseURL = "" // baseURL 非法 —— 丢弃，回退内置地址，不因此整体失败。
++    }
++  }
++  return { key, label, baseURL }
++}
++
 +const Z_LAUNCHER = 9998
 +const Z_OVERLAY = 9999
 +
@@ -1050,6 +1101,28 @@ index 000000000..c24f9d471
 +  background: "rgba(239,68,68,0.14)",
 +  border: "1px solid rgba(239,68,68,0.5)",
 +  color: "#fca5a5",
++}
++
++// [cx] US-013: 深链导入确认弹窗样式。复用面板的 overlay + panel 视觉，展示待导入的
++// label / 打码 key / baseURL，由用户确认后才写入（避免恶意深链静默写入）。
++const importRowStyle: JSX.CSSProperties = {
++  display: "flex",
++  "justify-content": "space-between",
++  gap: "12px",
++  padding: "8px 0",
++  "border-bottom": "1px solid rgba(255,255,255,0.06)",
++  "font-size": "13px",
++}
++
++const importRowLabelStyle: JSX.CSSProperties = {
++  color: "#9ca3af",
++  "white-space": "nowrap",
++}
++
++const importRowValueStyle: JSX.CSSProperties = {
++  color: "#e5e5e5",
++  "word-break": "break-all",
++  "text-align": "right",
 +}
 +
 +// 账户已用占比（0~100，整数）。总额度为 0 时返回 0，避免除零。
@@ -1627,6 +1700,153 @@ index 000000000..c24f9d471
 +}
 +
 +// 独立入口 + 面板容器。挂载在聊天界面之外,自管理开合状态,不与聊天 UI 共享任何上下文。
++// [cx] US-013: 深链导入确认弹窗。展示待导入的 label / 打码 key / baseURL，由用户确认后
++// 才写入（验收标准 #3：导入前有确认，避免恶意深链静默写入）。确认写入成功后转为「成功」态，
++// 提示可「设为激活」（验收标准 #4）。key 明文仅内存持有，展示一律 maskKey 打码、不写日志。
++function ImportDialog(props: { request: ImportRequest; onClose: () => void }) {
++  type Phase =
++    | { status: "confirm" }
++    | { status: "saving" }
++    | { status: "done"; id: string }
++    | { status: "activating" }
++    | { status: "error"; message: string }
++  const [phase, setPhase] = createSignal<Phase>({ status: "confirm" })
++
++  const displayBase = () => props.request.baseURL || (import.meta.env.NEWAPI_BASE_URL ?? "") || "内置渠道地址"
++
++  async function confirmImport() {
++    setPhase({ status: "saving" })
++    try {
++      // channelKeysAdd 返回最新 ChannelKeysState 的 JSON。解析出新条目 id（用于「设为激活」）。
++      const raw = await window.api.channelKeysAdd({
++        label: props.request.label,
++        key: props.request.key,
++        baseURL: props.request.baseURL,
++      })
++      const state = JSON.parse(raw) as { keys?: StoredChannelKey[] }
++      const keys = Array.isArray(state.keys) ? state.keys : []
++      // 新增条目排在列表末尾；按明文 key 匹配取回其 id（key 仅内存比对，不外传）。
++      const added = [...keys].reverse().find((k) => k.key === props.request.key)
++      setPhase({ status: "done", id: added?.id ?? "" })
++    } catch {
++      setPhase({ status: "error", message: "导入失败，请重试或手动在账户面板添加。" })
++    }
++  }
++
++  // [cx] US-013: 导入成功后可直接设为激活（验收标准 #4）。setActive 后拉该 key 的 /v1/models
++  // 落盘（供内核 config 注入可选模型），并提示需重启内核生效（US-002：config 启动期一次性注入）。
++  async function activateNow(id: string) {
++    if (!id) {
++      props.onClose()
++      return
++    }
++    setPhase({ status: "activating" })
++    try {
++      await window.api.channelKeysSetActive(id)
++      const baseURL = props.request.baseURL || (import.meta.env.NEWAPI_BASE_URL ?? "")
++      const models = await fetchModelsWith(baseURL, props.request.key)
++      if (models.length > 0) {
++        try {
++          await window.api.channelKeysSetModels(id, models)
++        } catch {
++          // 模型缓存写入失败不阻断激活。
++        }
++      }
++    } catch {
++      // 设为激活失败——不崩溃，直接关闭（用户可在面板手动切换）。
++    }
++    props.onClose()
++  }
++
++  return (
++    <div style={overlayStyle} onClick={props.onClose} role="presentation">
++      <div style={panelStyle} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="导入 key">
++        <div style={headerStyle}>
++          <strong style={{ "font-size": "15px" }}>导入 key</strong>
++          <button type="button" style={closeButtonStyle} aria-label="关闭" onClick={props.onClose}>
++            ✕
++          </button>
++        </div>
++
++        <Switch>
++          <Match when={phase().status === "done" || phase().status === "activating"}>
++            <div style={{ ...stateBoxStyle, "text-align": "left" }}>
++              <div style={{ ...onboardTitleStyle, "text-align": "center" }}>✅ 导入成功</div>
++              <p style={{ "margin-bottom": "16px", "text-align": "center" }}>
++                「{props.request.label || maskKey(props.request.key) || "新 key"}」已加入本地列表。是否立即设为激活 key？
++                <br />
++                <span style={{ "font-size": "12px", color: "#9ca3af" }}>（激活后需重启内核生效）</span>
++              </p>
++              <div style={{ display: "flex", gap: "8px" }}>
++                <button
++                  type="button"
++                  style={{ ...primarySmallButtonStyle, flex: "1" }}
++                  disabled={phase().status === "activating"}
++                  aria-disabled={phase().status === "activating"}
++                  onClick={() => {
++                    const p = phase()
++                    if (p.status === "done") void activateNow(p.id)
++                  }}
++                >
++                  {phase().status === "activating" ? "设置中…" : "设为激活"}
++                </button>
++                <button type="button" style={smallButtonStyle} onClick={props.onClose}>
++                  暂不
++                </button>
++              </div>
++            </div>
++          </Match>
++
++          <Match when={phase().status === "error"}>
++            <div style={stateBoxStyle}>
++              <div style={{ color: "#fca5a5", "margin-bottom": "16px" }}>
++                {(phase() as { status: "error"; message: string }).message}
++              </div>
++              <button type="button" style={{ ...smallButtonStyle, width: "100%" }} onClick={props.onClose}>
++                关闭
++              </button>
++            </div>
++          </Match>
++
++          <Match when={phase().status === "confirm" || phase().status === "saving"}>
++            <p style={{ "margin-bottom": "12px", color: "#9ca3af", "font-size": "13px", "line-height": "1.6" }}>
++              收到一条导入请求。请确认以下 key 信息无误后再导入——请勿导入来源不明的 key。
++            </p>
++            <div style={{ "margin-bottom": "16px" }}>
++              <div style={importRowStyle}>
++                <span style={importRowLabelStyle}>名称</span>
++                <span style={importRowValueStyle}>{props.request.label || "（未命名）"}</span>
++              </div>
++              <div style={importRowStyle}>
++                <span style={importRowLabelStyle}>API Key</span>
++                <span style={importRowValueStyle}>{maskKey(props.request.key)}</span>
++              </div>
++              <div style={{ ...importRowStyle, "border-bottom": "none" }}>
++                <span style={importRowLabelStyle}>渠道地址</span>
++                <span style={importRowValueStyle}>{displayBase()}</span>
++              </div>
++            </div>
++            <div style={{ display: "flex", gap: "8px" }}>
++              <button
++                type="button"
++                style={{ ...primarySmallButtonStyle, flex: "1" }}
++                disabled={phase().status === "saving"}
++                aria-disabled={phase().status === "saving"}
++                onClick={confirmImport}
++              >
++                {phase().status === "saving" ? "导入中…" : "确认导入"}
++              </button>
++              <button type="button" style={smallButtonStyle} onClick={props.onClose}>
++                取消
++              </button>
++            </div>
++          </Match>
++        </Switch>
++      </div>
++    </div>
++  )
++}
++
 +export function BalanceLauncher() {
 +  const [open, setOpen] = createSignal(false)
 +  // [cx] US-007/US-008: 入口按钮上展示当前激活 key 账户的头像/用户名。挂载时按激活 key
@@ -1641,6 +1861,8 @@ index 000000000..c24f9d471
 +  const [noKeys, setNoKeys] = createSignal(false)
 +  // [cx] US-012: 自动切换 key 的用户可见提示（切到了哪个 key / 全部不可用）。
 +  const [autoSwitch, setAutoSwitch] = createSignal<AutoSwitchNotice | null>(null)
++  // [cx] US-013: 待确认导入的 cx:// 深链请求（非空时弹确认框）。
++  const [importReq, setImportReq] = createSignal<ImportRequest | null>(null)
 +
 +  onMount(() => {
 +    void resolveActiveCreds().then((creds) => {
@@ -1660,6 +1882,24 @@ index 000000000..c24f9d471
 +    const abort = new AbortController()
 +    void subscribeSessionErrors((error) => void handleKernelCallError(error, setAutoSwitch), abort.signal)
 +    onCleanup(() => abort.abort())
++
++    // [cx] US-013: 监听桌面端 deep-link 事件（renderer index.tsx 派发的 opencode:deep-link
++    // CustomEvent，detail.urls 含所有唤起 URL——含上游 opencode:// 与本项目 cx://）。从中筛出
++    // cx:// 导入链接解析，弹确认框（避免恶意深链静默写入）。一次只处理一条（取第一条有效的）。
++    const onDeepLink = (e: Event) => {
++      const detail = (e as CustomEvent<{ urls?: unknown }>).detail
++      const urls = Array.isArray(detail?.urls) ? (detail.urls as unknown[]) : []
++      for (const u of urls) {
++        if (typeof u !== "string") continue
++        const req = parseImportDeepLink(u)
++        if (req) {
++          setImportReq(req)
++          break
++        }
++      }
++    }
++    window.addEventListener("opencode:deep-link", onDeepLink)
++    onCleanup(() => window.removeEventListener("opencode:deep-link", onDeepLink))
 +  })
 +
 +  return (
@@ -1717,6 +1957,10 @@ index 000000000..c24f9d471
 +      </button>
 +      <Show when={open()}>
 +        <BalancePanel onClose={() => setOpen(false)} />
++      </Show>
++      {/* [cx] US-013: cx:// 深链导入确认弹窗（有待确认请求时才渲染）。 */}
++      <Show when={importReq()} keyed>
++        {(req) => <ImportDialog request={req} onClose={() => setImportReq(null)} />}
 +      </Show>
 +    </>
 +  )

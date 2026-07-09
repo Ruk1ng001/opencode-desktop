@@ -1,0 +1,37 @@
+# 06-deeplink-cx —— cx:// 深链协议注册（US-013）
+#
+# 职责：在主进程注册本项目自定义的 cx:// 深链协议，复用上游 opencode 既有的一整套
+# deep-link 分发机制（open-url / second-instance → emitDeepLinks → sendDeepLinks →
+# renderer 派发 opencode:deep-link CustomEvent），供网站「一键导入 key」深链唤起 App。
+#   1. app.setAsDefaultProtocolClient("cx") —— 紧邻上游的 "opencode" 注册，声明 cx:// 归本 App。
+#   2. second-instance 的 argv 过滤 —— 追加识别 cx:// 前缀（原只过滤 opencode://）；
+#      macOS 的 open-url 不过滤 scheme，cx:// 天然可用，无需改动。
+# 解析 / 确认 / 写入在 renderer 侧完成（01 补丁 balance-panel.tsx 的 parseImportDeepLink +
+# ImportDialog）——主进程只负责协议注册与 URL 透传，不碰 key 明文。
+# 独立于 01-05 的文件（仅改 main/index.ts），按 NN 序在其后应用。
+diff --git a/packages/desktop/src/main/index.ts b/packages/desktop/src/main/index.ts
+index acceabfef..ad7279482 100644
+--- a/packages/desktop/src/main/index.ts
++++ b/packages/desktop/src/main/index.ts
+@@ -194,7 +194,10 @@ const main = Effect.gen(function* () {
+   preferAppEnv(app.getPath("userData"))
+ 
+   app.on("second-instance", (_event: Event, argv: string[]) => {
+-    const urls = argv.filter((arg: string) => arg.startsWith("opencode://"))
++    // [cx] US-013: 深链一键导入。除上游 opencode:// 外，追加识别本项目自定义的 cx://
++    // 协议（网站「一键导入 key」深链）。二者都经既有 emitDeepLinks → sendDeepLinks 送到
++    // renderer，由 renderer 侧按 scheme 分派（cx:// 走导入确认流程，见 balance-panel.tsx）。
++    const urls = argv.filter((arg: string) => arg.startsWith("opencode://") || arg.startsWith("cx://"))
+     if (urls.length) {
+       logger.log("deep link received via second-instance", { urls })
+       emitDeepLinks(urls)
+@@ -260,6 +263,9 @@ const main = Effect.gen(function* () {
+     ),
+   )
+   app.setAsDefaultProtocolClient("opencode")
++  // [cx] US-013: 注册自定义 cx:// 深链协议（网站「一键导入 key」入口），复用上游同一套
++  // deep-link 分发机制（open-url / second-instance → emitDeepLinks → sendDeepLinks）。
++  app.setAsDefaultProtocolClient("cx")
+   registerRendererProtocol()
+   setDockIcon()
+   const updater = setupAutoUpdater(stopSidecars)
