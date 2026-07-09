@@ -51,10 +51,12 @@ const config: Configuration = {
     icon: path.join(iconsDir, "icon.icns"),
     // 验收标准要求产物是 .dmg；上游 mac target 还含 zip（用于自动更新）。
     // 只保留 dmg，聚焦验收产物、减少无凭据下的失败面。
-    // 显式出 x64 + arm64 两个独立 dmg：macos-latest runner 现为 Apple Silicon，
-    // 不指定架构时 electron-builder 默认只出 runner 架构（arm64），Intel Mac 装不上
-    // （报 "not supported on this Mac"）。分架构出包，用户按自己芯片下对应 dmg。
-    target: [{ target: "dmg", arch: ["x64", "arm64"] }],
+    // 架构不在此写死：@lydell/node-pty 按平台拆成独立子包，靠 optionalDependencies
+    // 只装「当前 runner 架构」那一个。若在单台 arm64 runner 上跨架构出 x64 包，
+    // 打进去的仍是 arm64 的 pty.node，运行时找 darwin-x64/pty.node 会崩。
+    // 故 CI 用两个原生 runner（Intel + Apple Silicon）各自 --x64 / --arm64 出包，
+    // 这里只保留 target，架构由命令行 --x64 / --arm64 指定，各出各的独立 dmg。
+    target: ["dmg"],
     // 无凭据降级：关公证 + 不签名 + 关 hardenedRuntime（hardenedRuntime 需签名配套）。
     ...(unsigned ? { notarize: false, hardenedRuntime: false, identity: null } : {}),
   },

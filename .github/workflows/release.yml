@@ -144,19 +144,32 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # .dmg 用 macOS runner
+          # .dmg（Apple Silicon）：arm64 runner 原生编译，装 arm64 的 node-pty。
           - os: macos-latest
             platform_flag: "--mac"
+            arch_flag: "--arm64"
             artifact_glob: "opencode/packages/desktop/dist/*.dmg"
-            artifact_name: cx-dmg
+            artifact_name: cx-dmg-arm64
+          # .dmg（Intel）：x64 runner 原生编译，装 x64 的 node-pty。
+          # 关键：node-pty 是按平台拆分的独立子包（@lydell/node-pty-darwin-<arch>），
+          # 靠 optionalDependencies 只装当前 runner 架构那一个。故 x64 包必须在 x64
+          # runner 上编，不能在 arm64 runner 上跨架构出 x64（会塞进 arm64 的 pty.node，
+          # 运行时报 Cannot find ./prebuilds/darwin-x64/pty.node）。
+          - os: macos-15-intel
+            platform_flag: "--mac"
+            arch_flag: "--x64"
+            artifact_glob: "opencode/packages/desktop/dist/*.dmg"
+            artifact_name: cx-dmg-x64
           # .exe 用 windows runner
           - os: windows-latest
             platform_flag: "--win"
+            arch_flag: ""
             artifact_glob: "opencode/packages/desktop/dist/*.exe"
             artifact_name: cx-exe
           # .AppImage 用 linux runner
           - os: ubuntu-latest
             platform_flag: "--linux"
+            arch_flag: ""
             artifact_glob: "opencode/packages/desktop/dist/*.AppImage"
             artifact_name: cx-appimage
     runs-on: ${{ matrix.os }}
@@ -231,7 +244,7 @@ jobs:
         run: |
           # 用品牌覆盖配置出包。--publish never：只出产物，发布交给 release job。
           # 配置路径相对 desktop 目录回溯到仓库根的 brand/。
-          npx electron-builder ${{ matrix.platform_flag }} --publish never \
+          npx electron-builder ${{ matrix.platform_flag }} ${{ matrix.arch_flag }} --publish never \
             --config ../../../brand/electron-builder.brand.ts
 
       - name: 上传安装包产物
