@@ -41,6 +41,11 @@
 #     横幅（立即重启复用 window.api.relaunch，提醒会中断进行中的对话、聊天历史不受影响）。key
 #     明文输入（新增表单用 type=password）只在内存/本地 store 流转，不打印/不写日志，展示一律 maskKey 打码。
 #     key 管理全部走 05-channel-keys-ipc 的专用 IPC（不用通用 storeSet，那会破坏主进程对象读取）。
+#   - US-011（首启无 key 引导）：本地 key 列表为空且无内置默认 key（resolveKeyList 返回空数组、
+#     resolveActiveCreds 返回 null）时，面板空态从弱提示升级为明确引导（图标 + 标题「还没有可用的 key」
+#     + 说明），并直接展开新增 key 表单（AddKeyForm startOpen）——引导即进入 US-009 新增流程，无需二次
+#     点击；入口按钮同步切换为引导态（🔑「导入 key」+ 高亮样式），点击打开面板。有内置默认 key 或已有
+#     key 时不显示引导（走正常账户展示 / keys().length > 0 分支）。
 [01-balance-panel]
 packages/desktop/src/renderer/balance/balance-panel.tsx
 packages/desktop/src/renderer/index.tsx

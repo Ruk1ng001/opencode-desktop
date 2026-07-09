@@ -1,11 +1,12 @@
 diff --git a/packages/desktop/src/renderer/balance/balance-panel.tsx b/packages/desktop/src/renderer/balance/balance-panel.tsx
 new file mode 100644
-index 000000000..98d1fa55a
+index 000000000..c72a6a3ba
 --- /dev/null
 +++ b/packages/desktop/src/renderer/balance/balance-panel.tsx
-@@ -0,0 +1,1325 @@
+@@ -0,0 +1,1400 @@
 +// [cx] 独立账户面板 —— 对接 new-api 取用户名/头像/额度/用量（US-006）+ 充值入口（US-007）
 +//     + key 列表卡片 UI + 顶部账户汇总（US-008）+ 增删改 key 与手动切换激活 key（US-009）
++//     + 首启无 key 引导（US-011）
 +//
 +// 设计约束（见 TODO.md / brand/docs/api-app-profile.md / 验收标准）：
 +//   - 独立展示区域，与 opencode 原有聊天 UI 组件完全解耦；本文件不 import 任何
@@ -32,6 +33,10 @@ index 000000000..98d1fa55a
 +//         切换后给出重启提示（横幅 + 立即重启按钮），提醒当前会话将中断，由用户决定何时重启。
 +//     所有 key 的增删改切换都走主进程数据层专用 IPC（window.api.channelKeys*），不用通用
 +//     storeSet（那会把整个对象存成字符串、破坏主进程侧对象读取）。
++//   - [cx] US-011: 首启无 key 引导。本地 key 列表为空且无内置默认 key（resolveKeyList
++//     返回空数组）时，面板与入口都显示明确引导：面板空态换成「还没有可用的 key」引导块并
++//     直接展开新增 key 表单（AddKeyForm startOpen），入口按钮换成「导入 key」引导态——
++//     引导即进入 US-009 的新增 key 流程。有内置默认 key 或已有 key 时不显示引导。
 +//   - baseURL 与鉴权凭据：优先取本地 key 条目（每张卡片各自的 baseURL/key），
 +//     回退构建期注入的同名变量（NEWAPI_BASE_URL / NEWAPI_API_KEY），本文件不硬编码任何地址/密钥。
 +//   - 各数据状态各有明确提示：加载中 / 请求失败 / 未配置凭据 / 就绪。
@@ -354,6 +359,14 @@ index 000000000..98d1fa55a
 +  "box-shadow": "0 2px 8px rgba(0,0,0,0.3)",
 +}
 +
++// [cx] US-011: 首启无 key 时入口按钮的引导态样式。用醒目的蓝底强调「需要导入 key」，
++// 与正常账户态（深色半透明胶囊）区分，提示用户点击进入新增 key 流程。
++const launcherOnboardStyle: JSX.CSSProperties = {
++  border: "1px solid rgba(59,130,246,0.7)",
++  background: "#2563eb",
++  color: "#ffffff",
++}
++
 +// [cx] US-007: 入口按钮上的小头像（比面板内的 avatarStyle 小一号），及无头像时的首字占位。
 +const launcherAvatarStyle: JSX.CSSProperties = {
 +  width: "24px",
@@ -412,6 +425,32 @@ index 000000000..98d1fa55a
 +  color: "#9ca3af",
 +  "font-size": "13px",
 +  "line-height": "1.6",
++}
++
++// [cx] US-011: 首启无 key 引导块样式（比普通 stateBox 更醒目：图标 + 标题 + 说明）。
++const onboardBoxStyle: JSX.CSSProperties = {
++  padding: "20px 16px 8px",
++  "text-align": "center",
++}
++
++const onboardIconStyle: JSX.CSSProperties = {
++  "font-size": "32px",
++  "line-height": "1",
++  "margin-bottom": "10px",
++}
++
++const onboardTitleStyle: JSX.CSSProperties = {
++  "font-size": "15px",
++  "font-weight": "600",
++  color: "#f5f5f5",
++  "margin-bottom": "8px",
++}
++
++const onboardDescStyle: JSX.CSSProperties = {
++  "font-size": "13px",
++  color: "#9ca3af",
++  "line-height": "1.6",
++  "margin-bottom": "6px",
 +}
 +
 +const closeButtonStyle: JSX.CSSProperties = {
@@ -906,8 +945,13 @@ index 000000000..98d1fa55a
 +
 +// [cx] US-009: 新增 key 表单。粘贴 sk-…（必填）+ 可选 label / baseURL。key 明文只在内存流转，
 +// 提交经 channelKeysAdd 写入本地 store；不打印、不写日志。
-+function AddKeyForm(props: { onAdd: (input: { label: string; key: string; baseURL: string }) => Promise<void> }) {
-+  const [open, setOpen] = createSignal(false)
++// [cx] US-011: startOpen —— 首启无 key 引导时直接展开表单（引导即进入新增 key 流程），
++// 无需用户再点一次「+ 新增 key」。
++function AddKeyForm(props: {
++  onAdd: (input: { label: string; key: string; baseURL: string }) => Promise<void>
++  startOpen?: boolean
++}) {
++  const [open, setOpen] = createSignal(props.startOpen ?? false)
 +  const [key, setKey] = createSignal("")
 +  const [label, setLabel] = createSignal("")
 +  const [baseURL, setBaseURL] = createSignal("")
@@ -1153,13 +1197,21 @@ index 000000000..98d1fa55a
 +            <div style={stateBoxStyle}>正在加载…</div>
 +          </Match>
 +
++          {/* [cx] US-011: 首启无 key 引导。本地 key 列表为空且无内置默认 key（resolveKeyList
++              返回空数组）时，展示明确的引导提示，说明「导入你的第一个 key 即可开始」，并直接
++              展开新增 key 表单（startOpen）——引导即进入 US-009 的新增 key 流程，无需二次点击。
++              有内置默认 key 或已有 key 时走 keys().length > 0 分支，不显示本引导。 */}
 +          <Match when={keys().length === 0}>
-+            <div style={stateBoxStyle}>
-+              尚未配置渠道凭据
-+              <br />
-+              请在下方新增 key,或在打包/启动时注入 NEWAPI_BASE_URL 与 NEWAPI_API_KEY
++            <div style={onboardBoxStyle}>
++              <div style={onboardIconStyle}>🔑</div>
++              <div style={onboardTitleStyle}>还没有可用的 key</div>
++              <div style={onboardDescStyle}>
++                导入一个 API Key（sk-…）即可开始使用。
++                <br />
++                在下方粘贴你的 key 完成导入。
++              </div>
 +            </div>
-+            <AddKeyForm onAdd={handleAdd} />
++            <AddKeyForm onAdd={handleAdd} startOpen />
 +          </Match>
 +
 +          <Match when={keys().length > 0}>
@@ -1294,10 +1346,18 @@ index 000000000..98d1fa55a
 +  // 内部已捕获所有错误、永不抛出);仅在 ready 态用真实身份,其余态(无凭据/加载中/失败)
 +  // 回退到静态「账户」文字,保证入口永远可点、绝不崩溃。
 +  const [identity, setIdentity] = createSignal<{ username: string; avatar: string } | null>(null)
++  // [cx] US-011: 首启无 key 引导。resolveActiveCreds() 返回 null 恰好等价于「本地 key 列表
++  // 为空且无内置默认 key」（既无本地条目、又无构建期注入的 NEWAPI_BASE_URL/API_KEY）——此时
++  // 入口按钮切换为引导态（「导入 key」+ 提示样式），点击打开面板进入 US-009 新增流程。
++  // 有内置默认 key 或已有 key 时 creds 非空，noKeys 保持 false，入口走正常账户展示。
++  const [noKeys, setNoKeys] = createSignal(false)
 +
 +  onMount(() => {
 +    void resolveActiveCreds().then((creds) => {
-+      if (!creds) return
++      if (!creds) {
++        setNoKeys(true)
++        return
++      }
 +      void fetchProfileWith(creds.baseURL, creds.apiKey).then((state) => {
 +        if (state.status === "ready") {
 +          setIdentity({ username: state.username, avatar: state.avatar })
@@ -1308,19 +1368,34 @@ index 000000000..98d1fa55a
 +
 +  return (
 +    <>
-+      <button type="button" style={launcherStyle} aria-label="打开账户面板" onClick={() => setOpen(true)}>
-+        <Show when={identity()} fallback={<span>账户</span>} keyed>
-+          {(who) => (
++      <button
++        type="button"
++        style={noKeys() ? { ...launcherStyle, ...launcherOnboardStyle } : launcherStyle}
++        aria-label={noKeys() ? "导入 key 开始使用" : "打开账户面板"}
++        onClick={() => setOpen(true)}
++      >
++        <Show
++          when={!noKeys()}
++          fallback={
 +            <>
-+              <Show
-+                when={who.avatar}
-+                fallback={<div style={launcherAvatarFallbackStyle}>{avatarInitial(who.username)}</div>}
-+              >
-+                <img src={who.avatar} alt="头像" style={launcherAvatarStyle} />
-+              </Show>
-+              <span>{who.username || "账户"}</span>
++              <span aria-hidden="true">🔑</span>
++              <span>导入 key</span>
 +            </>
-+          )}
++          }
++        >
++          <Show when={identity()} fallback={<span>账户</span>} keyed>
++            {(who) => (
++              <>
++                <Show
++                  when={who.avatar}
++                  fallback={<div style={launcherAvatarFallbackStyle}>{avatarInitial(who.username)}</div>}
++                >
++                  <img src={who.avatar} alt="头像" style={launcherAvatarStyle} />
++                </Show>
++                <span>{who.username || "账户"}</span>
++              </>
++            )}
++          </Show>
 +        </Show>
 +      </button>
 +      <Show when={open()}>
