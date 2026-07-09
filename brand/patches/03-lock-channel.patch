@@ -1,20 +1,25 @@
-# 03-lock-channel —— 内核注入 / 默认锁定内置渠道
+# 03-lock-channel —— 内核注入 / 默认锁定内置渠道（token 来源：本地激活 key，回退构建期内置）
 #
-# 职责：让桌面产物开箱即走内置 newapi 渠道，无需用户手动配置。
-#   1. electron.vite.config.ts main.define —— 构建期把 US-003 注入的渠道值
+# 职责：让桌面产物开箱即走内置 newapi 渠道，无需用户手动配置；并让内核用「当前激活 key」发请求。
+#   1. electron.vite.config.ts main.define —— 构建期把渠道值
 #      (NEWAPI_BASE_URL / NEWAPI_API_KEY / NEWAPI_MODEL) 内联进主进程的 import.meta.env
-#      (主进程运行时读不到打包机的 process.env)。
-#   2. server.ts buildChannelConfigContent() —— 三者齐备时拼装一份 opencode config,
+#      (主进程运行时读不到打包机的 process.env)，作为「内置默认」回退值。
+#   2. server.ts buildChannelConfigContent() —— 拼装一份 opencode config,
 #      结构对齐 brand/opencode.template.json;createSidecarEnv() 经 OPENCODE_CONFIG_CONTENT
 #      传给内核 sidecar,在 config 合并链末端覆盖用户同名配置,实现「默认注入内置渠道」。
-#      值缺失(如 dev)则跳过注入,退回 opencode 原生行为,不破坏本地开发。
+#      baseURL / apiKey 优先取「本地激活 key」(US-003 的 store-channel-keys,主进程侧
+#      electron-store,直接同步读、无需 IPC);本地无激活 key 时回退到构建期内置默认值;
+#      两者都无则不注入,退回 opencode 原生行为(不破坏本地开发)。model 无 per-key 字段,
+#      始终取构建期内置默认。切换激活 key 后须重启 sidecar 才生效(US-002 结论)。
 #   3. main/env.d.ts —— 为上述内联变量补 ImportMetaEnv 类型声明,保证 typecheck 通过。
 #
-# 依赖:叠加在 02-balance-newapi 之上(共享 electron.vite.config.ts 的 newapiDefine)。
-# 应用(在 opencode/ 内,基线为 brand/BASE_SHA,按 01→02→03 顺序):
+# 依赖:叠加在 02-balance-newapi 之上(共享 electron.vite.config.ts 的 newapiDefine);
+#      server.ts 引用 04-channel-keys-store 的 store-channel-keys.ts(按 NN 序 03→04 应用,
+#      git apply 只做文本操作不校验 import,typecheck 在全部补丁应用后才跑)。
+# 应用(在 opencode/ 内,基线为 brand/BASE_SHA,按 01→02→03→04 顺序):
 #   git -C opencode apply --3way brand/patches/03-lock-channel.patch
 diff --git a/packages/desktop/electron.vite.config.ts b/packages/desktop/electron.vite.config.ts
-index 8a24b20..c01a5e1 100644
+index 8a24b20db..c01a5e12c 100644
 --- a/packages/desktop/electron.vite.config.ts
 +++ b/packages/desktop/electron.vite.config.ts
 @@ -45,6 +45,13 @@ export default defineConfig({
@@ -32,7 +37,7 @@ index 8a24b20..c01a5e1 100644
      build: {
        rollupOptions: {
 diff --git a/packages/desktop/src/main/env.d.ts b/packages/desktop/src/main/env.d.ts
-index d69e6fe..4c90be2 100644
+index d69e6feec..4c90be269 100644
 --- a/packages/desktop/src/main/env.d.ts
 +++ b/packages/desktop/src/main/env.d.ts
 @@ -1,5 +1,10 @@
@@ -47,21 +52,39 @@ index d69e6fe..4c90be2 100644
  
  interface ImportMeta {
 diff --git a/packages/desktop/src/main/server.ts b/packages/desktop/src/main/server.ts
-index b213dbc..9cb255c 100644
+index b213dbc82..259db3aef 100644
 --- a/packages/desktop/src/main/server.ts
 +++ b/packages/desktop/src/main/server.ts
-@@ -207,6 +207,30 @@ export async function checkHealth(url: string, password?: string | null): Promis
+@@ -6,6 +6,7 @@ import { getLogger } from "./logging"
+ import { getUserShell, loadShellEnv } from "./shell-env"
+ import { getStore } from "./store"
+ import { DEFAULT_SERVER_URL_KEY } from "./store-keys"
++import { readActiveChannelKey } from "./store-channel-keys"
+ 
+ export type HealthCheck = { wait: Promise<void> }
+ 
+@@ -207,6 +208,40 @@ export async function checkHealth(url: string, password?: string | null): Promis
    }
  }
  
-+// [cx] US-003/US-008: 内置渠道「默认注入」。渠道值在构建期由 electron.vite 的 main.define
-+// 内联进 import.meta.env（主进程运行时读不到 process.env 里的这些值）。三者齐备时构造一份
-+// opencode config，经 OPENCODE_CONFIG_CONTENT 传给内核 sidecar。该变量在内核 config 合并链里
-+// 排在全局 / 项目配置之后，故注入的 newapi provider 与默认 model 会覆盖用户同名配置，实现
-+// 开箱即走内置渠道；值缺失（如 dev）则不注入，退回原生行为。结构对齐 brand/opencode.template.json。
++// [cx] US-003/US-004/US-008: 内置渠道「默认注入」。三者齐备时构造一份 opencode config，
++// 经 OPENCODE_CONFIG_CONTENT 传给内核 sidecar。该变量在内核 config 合并链里排在全局 / 项目
++// 配置之后，故注入的 newapi provider 与默认 model 会覆盖用户同名配置，实现开箱即走内置渠道；
++// 值缺失（如 dev、且无本地激活 key）则不注入，退回原生行为。结构对齐 brand/opencode.template.json。
++//
++// [cx] US-004 token 来源改造 —— 数据流说明：
++//   baseURL / apiKey 优先来自「本地激活 key」（US-003 的 store-channel-keys）。该存储是主进程侧
++//   的 electron-store（opencode.settings，JSON 明文，仅本地），server.ts 与 store-channel-keys.ts
++//   同在主进程，故此处直接 readActiveChannelKey() 同步读取，无需经 IPC / renderer 中转（renderer
++//   若要改激活项，也是经 IPC 落到同一个 store，主进程下次 spawn sidecar 时即读到新值）。
++//   本地无激活 key 时回退到构建期内联的内置默认值（import.meta.env.NEWAPI_*，见 electron.vite
++//   main.define）；两者都无则整体缺失、不注入。model 无对应的 per-key 字段（ChannelKey 只含
++//   id/label/key/baseURL），故始终取构建期内置默认。
++//   注意：内核 config 是启动期一次性注入（US-002 结论），切换激活 key 后须重启 sidecar 才生效。
 +function buildChannelConfigContent(): string | undefined {
-+  const baseURL = import.meta.env.NEWAPI_BASE_URL
-+  const apiKey = import.meta.env.NEWAPI_API_KEY
++  const activeKey = readActiveChannelKey()
++  const baseURL = activeKey?.baseURL || import.meta.env.NEWAPI_BASE_URL
++  const apiKey = activeKey?.key || import.meta.env.NEWAPI_API_KEY
 +  const model = import.meta.env.NEWAPI_MODEL
 +  if (!baseURL || !apiKey || !model) return undefined
 +  return JSON.stringify({
@@ -81,7 +104,7 @@ index b213dbc..9cb255c 100644
  function createSidecarEnv(): Record<string, string> {
    const env = Object.fromEntries(
      Object.entries(process.env).flatMap(([key, value]) => (value === undefined ? [] : [[key, String(value)]])),
-@@ -214,6 +238,9 @@ function createSidecarEnv(): Record<string, string> {
+@@ -214,6 +249,9 @@ function createSidecarEnv(): Record<string, string> {
    delete env.DEBUG
    if (process.platform === "linux") delete env.LD_PRELOAD
    if (!app.isPackaged) env.OPENCODE_DISABLE_CHANNEL_DB = "1"

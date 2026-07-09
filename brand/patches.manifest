@@ -33,14 +33,20 @@ packages/desktop/src/renderer/index.tsx
 packages/desktop/electron.vite.config.ts
 packages/desktop/src/renderer/env.d.ts
 
-# 内置渠道锁定 / 内核默认注入（US-001 / US-003 / US-008）：
-#   - 构建期把 US-003 注入的渠道变量（NEWAPI_BASE_URL / NEWAPI_API_KEY / NEWAPI_MODEL）
-#     经 electron.vite main.define 内联进主进程 import.meta.env（主进程运行时读不到
-#     process.env 里的这些值）；三者齐备时 server.ts 拼装一份 opencode config，
-#     经 OPENCODE_CONFIG_CONTENT 传给内核 sidecar，使桌面产物默认走内置渠道。
+# 内置渠道锁定 / 内核默认注入（US-001 / US-003 / US-004 / US-008）：
+#   - 构建期把渠道变量（NEWAPI_BASE_URL / NEWAPI_API_KEY / NEWAPI_MODEL）经 electron.vite
+#     main.define 内联进主进程 import.meta.env（主进程运行时读不到 process.env 里的这些值），
+#     作为「内置默认」回退值；server.ts 拼装一份 opencode config，经 OPENCODE_CONFIG_CONTENT
+#     传给内核 sidecar，使桌面产物开箱即走内置渠道。
+#   - US-004：token 来源改为读本地激活 key。buildChannelConfigContent() 的 baseURL / apiKey
+#     优先取本地激活 key（04-channel-keys-store 的 store-channel-keys，主进程侧 electron-store，
+#     直接同步读、无需 IPC）；本地无激活 key 时回退构建期内置默认；两者都无则不注入、退回原生行为。
+#     model 无 per-key 字段，始终取构建期内置默认。切换激活 key 后须重启 sidecar 才生效（US-002）。
 #   - 内核 config 合并链里 OPENCODE_CONFIG_CONTENT 排在全局 / 项目配置之后，注入的
-#     newapi provider 与默认 model 覆盖用户同名配置；值缺失（如 dev）则不注入，退回原生行为。
+#     newapi provider 与默认 model 覆盖用户同名配置。
 #   - main/env.d.ts 补上对应 ImportMetaEnv 类型声明，保证 typecheck 通过。
+#   - 注意：server.ts 引用 04 的 store-channel-keys.ts，故 03 须先于/连同 04 应用（git apply 按
+#     NN 序 03→04，只做文本操作不校验 import，typecheck 在全部补丁应用后才跑）。
 [03-lock-channel]
 packages/desktop/electron.vite.config.ts
 packages/desktop/src/main/env.d.ts
