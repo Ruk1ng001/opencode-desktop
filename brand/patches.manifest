@@ -45,3 +45,15 @@ packages/desktop/src/renderer/env.d.ts
 packages/desktop/electron.vite.config.ts
 packages/desktop/src/main/env.d.ts
 packages/desktop/src/main/server.ts
+
+# 本地多 key 列表存储模型（US-003）：
+#   - 纯主进程数据层，复用 opencode 既有 electron-store（store.ts / getStore）。
+#     在默认 settings store（app.getPath("userData")/opencode.settings，JSON 明文）内
+#     以单键 channelKeys 保存 { keys: [{ id, label, key, baseURL }], activeKeyId }。
+#   - 提供读写封装：readChannelKeysState / readActiveChannelKey / addChannelKey /
+#     removeChannelKey / updateChannelKeyLabel / setActiveChannelKey。无 key 时读激活项返回
+#     null，不报错。key 明文仅存本地、不上传、不写日志（本模块不记录 key 值）。
+#   - store-keys.ts 追加 CHANNEL_KEYS_KEY 常量。后续 US（token 来源改造 / key 管理 UI）复用本层。
+[04-channel-keys-store]
+packages/desktop/src/main/store-channel-keys.ts
+packages/desktop/src/main/store-keys.ts
