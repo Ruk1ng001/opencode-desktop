@@ -1,12 +1,12 @@
 diff --git a/packages/desktop/src/renderer/balance/balance-panel.tsx b/packages/desktop/src/renderer/balance/balance-panel.tsx
 new file mode 100644
-index 000000000..c72a6a3ba
+index 000000000..c24f9d471
 --- /dev/null
 +++ b/packages/desktop/src/renderer/balance/balance-panel.tsx
-@@ -0,0 +1,1400 @@
+@@ -0,0 +1,1717 @@
 +// [cx] 独立账户面板 —— 对接 new-api 取用户名/头像/额度/用量（US-006）+ 充值入口（US-007）
 +//     + key 列表卡片 UI + 顶部账户汇总（US-008）+ 增删改 key 与手动切换激活 key（US-009）
-+//     + 首启无 key 引导（US-011）
++//     + 首启无 key 引导（US-011）+ 失效自动切换 key（US-012）
 +//
 +// 设计约束（见 TODO.md / brand/docs/api-app-profile.md / 验收标准）：
 +//   - 独立展示区域，与 opencode 原有聊天 UI 组件完全解耦；本文件不 import 任何
@@ -50,8 +50,18 @@ index 000000000..c72a6a3ba
 +//     时按钮禁用并提示。客户端内不实现任何支付逻辑。
 +//   - 安全底线：key 明文仅本地持有，展示层一律打码（maskKey），绝不整段渲染或写日志。
 +//     key 明文输入（新增表单）只在内存/本地 store 流转，不打印、不写日志、不上传。
++//   - [cx] US-012: 失效自动切换 key。常驻的 BalanceLauncher 挂载后独立订阅内核 sidecar 的
++//     事件流（GET /global/event，SSE，Basic 鉴权 opencode:password，凭据来自
++//     window.api.awaitInitialization()），监听 session.error 事件。当错误特征命中
++//     「额度耗尽 / key 失效」（ProviderAuthError，或 APIError 的 statusCode 401/402/403/429
++//     或报文含额度/失效关键词，见 isKeyFailureError）时，自动切换到列表中「下一个」未被本轮
++//     标记失败的可用 key（channelKeysSetActive + 拉该 key 的 /v1/models 落盘），并复用既有
++//     relaunch 重启内核使新 key 生效（US-002：config 启动期一次性注入，切 key 必须重启）。
++//     切换给用户可见提示（浮层横幅，说明切到了哪个 key + 立即重启）。所有 key 都已试过仍失败
++//     时给出「全部不可用」提示、不再自动切换（不无限重试）——重启后失败集合清零，用户修复额度
++//     后可重新触发。检测/切换全在 renderer（本文件），不改上游聊天组件、不新增 IPC。
 +
-+import { createSignal, onMount, For, Show, Switch, Match } from "solid-js"
++import { createSignal, onMount, onCleanup, For, Show, Switch, Match } from "solid-js"
 +import type { JSX } from "solid-js"
 +
 +// [cx] US-006: new-api 只读 profile 接口路径（站点根下，非 /v1 渠道端点）。
@@ -332,6 +342,256 @@ index 000000000..c72a6a3ba
 +  const apiKey = import.meta.env.NEWAPI_API_KEY ?? ""
 +  if (baseURL && apiKey) return { baseURL, apiKey }
 +  return null
++}
++
++// ============================================================================
++// [cx] US-012: 失效自动切换 key —— 检测内核调用失败中「额度耗尽 / key 失效」类错误，
++// 自动切换到列表中下一个可用 key 并重建内核 config（重启 sidecar），给用户可见提示。
++//
++// 检测来源（内核错误出口）：内核 sidecar 暴露 SSE 事件流 `/global/event`（Basic 鉴权
++// opencode:password，凭据来自 window.api.awaitInitialization()）。内核每次调用（生成）失败
++// 都会发 `session.error` 事件，`properties.error` 是判别联合：
++//   - ProviderAuthError —— provider 鉴权失败（key 失效 / 无权限）；
++//   - APIError —— 上游 HTTP 错误，含 statusCode / message / responseBody。
++// 我们据此识别「额度耗尽 / key 失效」这一类可切换的错误（见 classifyKernelError）。
++//
++// 生效机制：内核 config 是启动期一次性注入（US-002 结论：换 key 必须重启 sidecar），故
++// 「切换到下一个 key + 重建 config」= channelKeysSetActive(下一个 key) + relaunch（重启后
++// 主进程 buildChannelConfigContent 读新激活 key 重建 OPENCODE_CONFIG_CONTENT）。
++//
++// 不无限重试：把「本次会话内已失败」的 key id 记进 localStorage（带 TTL，额度可能次日恢复），
++// 自动切换只在「未失败」的 key 里挑下一个；全部 key 都失败时给明确提示、不再切换/重启。
++// localStorage 跨重启保留，故重启后新激活 key 若仍失败也会被记入，避免 A↔B 无限重启环。
++// ============================================================================
++
++// [cx] US-012: 已识别为「额度耗尽 / key 失效」的内核调用错误。message 仅用于展示/日志摘要，
++// 不含 sk- 明文（错误体来自内核，不回显任何本地 key）。
++type KernelCallError = { kind: "auth" | "quota"; message: string }
++
++// [cx] US-012: 从内核 session.error 的 error 对象识别「额度耗尽 / key 失效」类错误。
++// 命中返回分类结果，否则返回 null（如用户主动中断 MessageAbortedError、输出超长等不切换）。
++function classifyKernelError(error: unknown): KernelCallError | null {
++  if (!error || typeof error !== "object") return null
++  const e = error as { name?: unknown; data?: unknown }
++  const name = typeof e.name === "string" ? e.name : ""
++  const data = (e.data && typeof e.data === "object" ? e.data : {}) as {
++    message?: unknown
++    statusCode?: unknown
++    responseBody?: unknown
++  }
++  const message = typeof data.message === "string" ? data.message : ""
++  const responseBody = typeof data.responseBody === "string" ? data.responseBody : ""
++  const statusCode = typeof data.statusCode === "number" ? data.statusCode : undefined
++  const haystack = `${message}\n${responseBody}`.toLowerCase()
++
++  // provider 鉴权失败 —— 直接视为 key 失效类。
++  if (name === "ProviderAuthError") return { kind: "auth", message: message || "凭据鉴权失败" }
++
++  // 只对上游 API 错误做进一步判别；其余（UnknownError / OutputLength / Aborted）不切换。
++  if (name !== "APIError") return null
++
++  // 额度耗尽：new-api / OpenAI 兼容常见特征（402 付费 / 429 限流 + 额度类文案）。
++  const quotaHit =
++    statusCode === 402 ||
++    /insufficient|quota|balance|exceeded|欠费|额度|余额|耗尽|不足|out of credits?/.test(haystack)
++  if (quotaHit) return { kind: "quota", message: message || `额度不足（HTTP ${statusCode ?? "?"}）` }
++  if (statusCode === 429 && /quota|额度|余额|balance/.test(haystack))
++    return { kind: "quota", message: message || "额度不足（限流）" }
++
++  // key 失效 / 无权限：401 或明确的鉴权失败文案。
++  const authHit =
++    statusCode === 401 ||
++    statusCode === 403 ||
++    /unauthorized|invalid[_\s-]*api[_\s-]*key|invalid[_\s-]*key|expired|token.*invalid|invalid.*token|无效|失效|密钥错误|鉴权/.test(
++      haystack,
++    )
++  if (authHit) return { kind: "auth", message: message || `凭据无效（HTTP ${statusCode ?? "?"}）` }
++
++  return null
++}
++
++// [cx] US-012: 订阅内核 session.error 事件流。凭据来自 awaitInitialization（sidecar 的 url /
++// Basic 认证），断线自动重连（3s 退避）。任何错误都吞掉不抛出，signal.abort 后干净退出。
++// 命中「额度耗尽 / key 失效」类错误时回调 onError。轻量实现：不引入上游 SDK 的合流/心跳逻辑，
++// 只做「读取 SSE → 抽 data → 找 session.error」这一件事，避免耦合上游聊天上下文。
++async function subscribeSessionErrors(
++  onError: (error: KernelCallError) => void,
++  signal: AbortSignal,
++): Promise<void> {
++  const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
++  while (!signal.aborted) {
++    try {
++      const init = await window.api.awaitInitialization()
++      const base = (init?.url ?? "").replace(/\/+$/, "")
++      if (!base) {
++        await wait(3000)
++        continue
++      }
++      const headers: Record<string, string> = { Accept: "text/event-stream" }
++      const user = init.username ?? "opencode"
++      const pass = init.password ?? ""
++      if (pass) headers.Authorization = "Basic " + btoa(`${user}:${pass}`)
++
++      const res = await fetch(`${base}/global/event`, { headers, signal })
++      if (!res.ok || !res.body) {
++        await wait(3000)
++        continue
++      }
++
++      const reader = res.body.getReader()
++      const decoder = new TextDecoder()
++      let buf = ""
++      while (!signal.aborted) {
++        const { done, value } = await reader.read()
++        if (done) break
++        buf += decoder.decode(value, { stream: true })
++        let sep: number
++        // SSE 事件以空行（\n\n）分隔；逐个取出解析。
++        while ((sep = buf.indexOf("\n\n")) !== -1) {
++          const rawEvent = buf.slice(0, sep)
++          buf = buf.slice(sep + 2)
++          const dataStr = rawEvent
++            .split("\n")
++            .filter((line) => line.startsWith("data:"))
++            .map((line) => line.slice(5).trimStart())
++            .join("\n")
++          if (!dataStr) continue
++          try {
++            const msg = JSON.parse(dataStr) as { payload?: { type?: string; properties?: { error?: unknown } } }
++            const payload = msg?.payload ?? (msg as unknown as { type?: string; properties?: { error?: unknown } })
++            if (payload?.type === "session.error") {
++              const classified = classifyKernelError(payload.properties?.error)
++              if (classified) onError(classified)
++            }
++          } catch {
++            // 单条事件解析失败不影响后续；忽略。
++          }
++        }
++      }
++    } catch {
++      // 网络中断 / abort —— 落到下方重连退避。
++    }
++    if (signal.aborted) return
++    await wait(3000)
++  }
++}
++
++// [cx] US-012: 记录「已失败」key（额度耗尽 / 失效）到 localStorage，防止自动切换反复挑到同一个
++// 坏 key（含跨重启，避免无限重启环）。带 TTL——额度可能次日恢复，过期后重新可被自动选中。
++const FAILED_KEYS_STORAGE = "opencode.desktop.channel-keys.failed"
++const FAILED_TTL_MS = 10 * 60 * 1000
++
++type FailedKeyRec = { id: string; ts: number }
++
++function readFailedKeyRecs(): FailedKeyRec[] {
++  try {
++    if (typeof localStorage !== "object") return []
++    const raw = localStorage.getItem(FAILED_KEYS_STORAGE)
++    if (!raw) return []
++    const arr = JSON.parse(raw) as unknown
++    if (!Array.isArray(arr)) return []
++    const now = Date.now()
++    return arr.filter(
++      (r): r is FailedKeyRec =>
++        !!r && typeof (r as FailedKeyRec).id === "string" && typeof (r as FailedKeyRec).ts === "number" && now - (r as FailedKeyRec).ts < FAILED_TTL_MS,
++    )
++  } catch {
++    return []
++  }
++}
++
++function readFailedKeyIds(): string[] {
++  return readFailedKeyRecs().map((r) => r.id)
++}
++
++function markKeyFailed(id: string): void {
++  if (!id) return
++  try {
++    if (typeof localStorage !== "object") return
++    const recs = readFailedKeyRecs().filter((r) => r.id !== id)
++    recs.push({ id, ts: Date.now() })
++    localStorage.setItem(FAILED_KEYS_STORAGE, JSON.stringify(recs))
++  } catch {
++    // localStorage 不可用不影响主流程（仅退化为不跨重启记忆）。
++  }
++}
++
++// [cx] US-012: 自动切换的用户可见提示。
++//   - switched：已自动切到下一个可用 key（message 含目标 key 名），带「立即重启」使新 config 生效；
++//   - exhausted：所有 key 都不可用，明确提示、不再切换/重启（避免无限重试）。
++type AutoSwitchNotice = { kind: "switched" | "exhausted"; message: string }
++
++// [cx] US-012: 处理一次内核调用失败（已判定为额度耗尽 / key 失效）。串行化 + 幂等：
++//   - 用模块级 handling 标志避免并发处理（一次失败可能触发多条 error / 重连重放）；
++//   - 已产生「switched」提示（等待用户重启）后，忽略后续错误，不反复切换。
++// 流程：标记当前激活 key 失败 → 在「未失败、有有效凭据」的 stored key 里挑「下一个」（列表顺序
++// 轮转）→ channelKeysSetActive + 拉 /v1/models 落盘（重建 config 的模型集合）→ switched 提示；
++// 无下一个可用 key → exhausted 提示，不再重试。切换只改本地激活项 + 缓存模型，config 由下次
++// spawn 重建（US-002：换 key 必须重启 sidecar 才生效），故提示里给「立即重启」。
++let autoSwitchHandling = false
++
++async function handleKernelCallError(
++  error: KernelCallError,
++  setNotice: (notice: AutoSwitchNotice | null) => void,
++): Promise<void> {
++  if (autoSwitchHandling) return
++  autoSwitchHandling = true
++  try {
++    const state = await loadChannelState()
++    // 只在本地 stored key 上做切换（channelKeysSetActive 按 id 操作；内置回退无 id 不可切）。
++    const usable = state.keys.filter((k) => (k.key ?? "").trim().length > 0)
++    if (usable.length === 0) return // 无本地 key（仅内置回退）——无从切换，交由面板提示。
++
++    const current = state.keys.find((k) => k.id === state.activeKeyId) ?? usable[0]
++    if (current) markKeyFailed(current.id)
++
++    const failed = new Set(readFailedKeyIds())
++    // 从当前项之后开始按列表顺序轮转，挑第一个「未失败」的 key。
++    const startIdx = Math.max(0, usable.findIndex((k) => k.id === current?.id))
++    let next: StoredChannelKey | undefined
++    for (let i = 1; i <= usable.length; i++) {
++      const cand = usable[(startIdx + i) % usable.length]
++      if (!failed.has(cand.id)) {
++        next = cand
++        break
++      }
++    }
++
++    if (!next) {
++      // 所有 key 都已失败——明确提示、不再切换/重启，避免无限重试。
++      setNotice({
++        kind: "exhausted",
++        message: `所有 key 都不可用（${error.kind === "quota" ? "额度耗尽" : "凭据失效"}）。请在账户面板检查或充值后重试。`,
++      })
++      return
++    }
++
++    // 切换激活项 + 拉该 key 可用模型落盘（供重建 config 时注入），失败不阻断切换。
++    try {
++      await window.api.channelKeysSetActive(next.id)
++      const baseURL = next.baseURL || (import.meta.env.NEWAPI_BASE_URL ?? "")
++      const models = await fetchModelsWith(baseURL, next.key)
++      if (models.length > 0) {
++        try {
++          await window.api.channelKeysSetModels(next.id, models)
++        } catch {
++          // 模型缓存写入失败不阻断切换。
++        }
++      }
++    } catch {
++      // 切换写入失败——退化为提示，不崩溃。
++      setNotice({ kind: "exhausted", message: "自动切换 key 失败，请在账户面板手动切换。" })
++      return
++    }
++
++    const targetName = next.label?.trim() || maskKey(next.key) || "下一个 key"
++    setNotice({
++      kind: "switched",
++      message: `当前 key ${error.kind === "quota" ? "额度耗尽" : "已失效"}，已自动切换到「${targetName}」。重启内核后生效。`,
++    })
++  } finally {
++    autoSwitchHandling = false
++  }
 +}
 +
 +const Z_LAUNCHER = 9998
@@ -762,6 +1022,34 @@ index 000000000..c72a6a3ba
 +  "font-weight": "600",
 +  cursor: "pointer",
 +  "white-space": "nowrap",
++}
++
++// [cx] US-012: 自动切换 key 的顶部提示条（固定在界面顶部中央，独立于聊天 UI）。
++// 切换成功用与重启横幅一致的黄色（提示需重启生效）；全部 key 不可用用红色警示。
++const autoSwitchBannerStyle: JSX.CSSProperties = {
++  position: "fixed",
++  top: "16px",
++  left: "50%",
++  transform: "translateX(-50%)",
++  "z-index": String(Z_OVERLAY),
++  "max-width": "min(560px, 92vw)",
++  display: "flex",
++  "align-items": "center",
++  gap: "10px",
++  background: "rgba(234,179,8,0.14)",
++  border: "1px solid rgba(234,179,8,0.5)",
++  color: "#fde68a",
++  "border-radius": "8px",
++  padding: "10px 12px",
++  "font-size": "13px",
++  "line-height": "1.5",
++  "box-shadow": "0 8px 24px rgba(0,0,0,0.4)",
++}
++
++const autoSwitchExhaustedStyle: JSX.CSSProperties = {
++  background: "rgba(239,68,68,0.14)",
++  border: "1px solid rgba(239,68,68,0.5)",
++  color: "#fca5a5",
 +}
 +
 +// 账户已用占比（0~100，整数）。总额度为 0 时返回 0，避免除零。
@@ -1351,6 +1639,8 @@ index 000000000..c72a6a3ba
 +  // 入口按钮切换为引导态（「导入 key」+ 提示样式），点击打开面板进入 US-009 新增流程。
 +  // 有内置默认 key 或已有 key 时 creds 非空，noKeys 保持 false，入口走正常账户展示。
 +  const [noKeys, setNoKeys] = createSignal(false)
++  // [cx] US-012: 自动切换 key 的用户可见提示（切到了哪个 key / 全部不可用）。
++  const [autoSwitch, setAutoSwitch] = createSignal<AutoSwitchNotice | null>(null)
 +
 +  onMount(() => {
 +    void resolveActiveCreds().then((creds) => {
@@ -1364,10 +1654,37 @@ index 000000000..c72a6a3ba
 +        }
 +      })
 +    })
++
++    // [cx] US-012: 常驻订阅内核调用失败事件，命中「额度耗尽 / key 失效」即自动切换到
++    // 下一个可用 key。放在常驻的 BalanceLauncher（挂在聊天 UI 树之外）里，全程独立运行。
++    const abort = new AbortController()
++    void subscribeSessionErrors((error) => void handleKernelCallError(error, setAutoSwitch), abort.signal)
++    onCleanup(() => abort.abort())
 +  })
 +
 +  return (
 +    <>
++      {/* [cx] US-012: 自动切换提示条（固定在界面顶部，不进聊天 UI）。 */}
++      <Show when={autoSwitch()} keyed>
++        {(notice) => (
++          <div style={notice.kind === "exhausted" ? { ...autoSwitchBannerStyle, ...autoSwitchExhaustedStyle } : autoSwitchBannerStyle}>
++            <span style={{ flex: "1" }}>{notice.message}</span>
++            <Show when={notice.kind === "switched"}>
++              <button type="button" style={bannerButtonStyle} onClick={() => window.api.relaunch()}>
++                立即重启
++              </button>
++            </Show>
++            <button
++              type="button"
++              style={{ ...closeButtonStyle, "font-size": "14px" }}
++              aria-label="关闭提示"
++              onClick={() => setAutoSwitch(null)}
++            >
++              ✕
++            </button>
++          </div>
++        )}
++      </Show>
 +      <button
 +        type="button"
 +        style={noKeys() ? { ...launcherStyle, ...launcherOnboardStyle } : launcherStyle}

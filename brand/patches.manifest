@@ -46,6 +46,14 @@
 #     + 说明），并直接展开新增 key 表单（AddKeyForm startOpen）——引导即进入 US-009 新增流程，无需二次
 #     点击；入口按钮同步切换为引导态（🔑「导入 key」+ 高亮样式），点击打开面板。有内置默认 key 或已有
 #     key 时不显示引导（走正常账户展示 / keys().length > 0 分支）。
+#   - US-012（失效自动切换 key）：常驻的 BalanceLauncher 独立订阅内核 sidecar 的 SSE 事件流
+#     /global/event（凭据来自 window.api.awaitInitialization()，Basic opencode:password），逐条解析
+#     session.error 事件，classifyKernelError 从 error（ProviderAuthError / APIError）识别「额度耗尽
+#     （402 / insufficient / quota / 余额 等）/ key 失效（401/403 / unauthorized / invalid key 等）」类
+#     可切换错误。命中后 handleKernelCallError 标记当前激活 key 失败（localStorage 带 TTL，防跨重启无限
+#     环），在「未失败、有凭据」的本地 key 里按列表顺序轮转挑下一个，channelKeysSetActive + 拉 /v1/models
+#     落盘后给顶部提示条（切到哪个 key + 立即重启，因 config 启动期一次性注入须重启生效，US-002）；所有
+#     key 都不可用时给红色「不再重试」提示。纯 renderer，不改上游聊天组件、不新增 IPC。
 [01-balance-panel]
 packages/desktop/src/renderer/balance/balance-panel.tsx
 packages/desktop/src/renderer/index.tsx
