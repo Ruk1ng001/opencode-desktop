@@ -51,7 +51,10 @@ const config: Configuration = {
     icon: path.join(iconsDir, "icon.icns"),
     // 验收标准要求产物是 .dmg；上游 mac target 还含 zip（用于自动更新）。
     // 只保留 dmg，聚焦验收产物、减少无凭据下的失败面。
-    target: ["dmg"],
+    // 显式出 x64 + arm64 两个独立 dmg：macos-latest runner 现为 Apple Silicon，
+    // 不指定架构时 electron-builder 默认只出 runner 架构（arm64），Intel Mac 装不上
+    // （报 "not supported on this Mac"）。分架构出包，用户按自己芯片下对应 dmg。
+    target: [{ target: "dmg", arch: ["x64", "arm64"] }],
     // 无凭据降级：关公证 + 不签名 + 关 hardenedRuntime（hardenedRuntime 需签名配套）。
     ...(unsigned ? { notarize: false, hardenedRuntime: false, identity: null } : {}),
   },

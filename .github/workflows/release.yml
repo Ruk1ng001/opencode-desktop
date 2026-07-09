@@ -21,6 +21,7 @@ name: release
 #
 # 触发：
 #   - 手动 workflow_dispatch（可强制指定版本 / 强制发布）；
+#   - push 到 main（推代码即自动打包发布，版本号 detect 段按已有 release 自增 -cx.N）；
 #   - push tag v*-cx.*（维护者打 tag 即触发发布）。
 #
 # 平台矩阵严格对齐验收标准 #4：
@@ -39,6 +40,8 @@ on:
         type: boolean
         default: false
   push:
+    branches:
+      - main
     tags:
       - "v*-cx.*"
 
