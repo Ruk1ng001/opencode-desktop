@@ -32,3 +32,16 @@ packages/desktop/src/renderer/index.tsx
 [02-balance-newapi]
 packages/desktop/electron.vite.config.ts
 packages/desktop/src/renderer/env.d.ts
+
+# 内置渠道锁定 / 内核默认注入（US-001 / US-003 / US-008）：
+#   - 构建期把 US-003 注入的渠道变量（NEWAPI_BASE_URL / NEWAPI_API_KEY / NEWAPI_MODEL）
+#     经 electron.vite main.define 内联进主进程 import.meta.env（主进程运行时读不到
+#     process.env 里的这些值）；三者齐备时 server.ts 拼装一份 opencode config，
+#     经 OPENCODE_CONFIG_CONTENT 传给内核 sidecar，使桌面产物默认走内置渠道。
+#   - 内核 config 合并链里 OPENCODE_CONFIG_CONTENT 排在全局 / 项目配置之后，注入的
+#     newapi provider 与默认 model 覆盖用户同名配置；值缺失（如 dev）则不注入，退回原生行为。
+#   - main/env.d.ts 补上对应 ImportMetaEnv 类型声明，保证 typecheck 通过。
+[03-lock-channel]
+packages/desktop/electron.vite.config.ts
+packages/desktop/src/main/env.d.ts
+packages/desktop/src/main/server.ts

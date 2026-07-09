@@ -1,0 +1,93 @@
+# 03-lock-channel —— 内核注入 / 默认锁定内置渠道
+#
+# 职责：让桌面产物开箱即走内置 newapi 渠道，无需用户手动配置。
+#   1. electron.vite.config.ts main.define —— 构建期把 US-003 注入的渠道值
+#      (NEWAPI_BASE_URL / NEWAPI_API_KEY / NEWAPI_MODEL) 内联进主进程的 import.meta.env
+#      (主进程运行时读不到打包机的 process.env)。
+#   2. server.ts buildChannelConfigContent() —— 三者齐备时拼装一份 opencode config,
+#      结构对齐 brand/opencode.template.json;createSidecarEnv() 经 OPENCODE_CONFIG_CONTENT
+#      传给内核 sidecar,在 config 合并链末端覆盖用户同名配置,实现「默认注入内置渠道」。
+#      值缺失(如 dev)则跳过注入,退回 opencode 原生行为,不破坏本地开发。
+#   3. main/env.d.ts —— 为上述内联变量补 ImportMetaEnv 类型声明,保证 typecheck 通过。
+#
+# 依赖:叠加在 02-balance-newapi 之上(共享 electron.vite.config.ts 的 newapiDefine)。
+# 应用(在 opencode/ 内,基线为 brand/BASE_SHA,按 01→02→03 顺序):
+#   git -C opencode apply --3way brand/patches/03-lock-channel.patch
+diff --git a/packages/desktop/electron.vite.config.ts b/packages/desktop/electron.vite.config.ts
+index 8a24b20..c01a5e1 100644
+--- a/packages/desktop/electron.vite.config.ts
++++ b/packages/desktop/electron.vite.config.ts
+@@ -45,6 +45,13 @@ export default defineConfig({
+   main: {
+     define: {
+       "import.meta.env.OPENCODE_CHANNEL": JSON.stringify(channel),
++      // [cx] US-锁定渠道: 主进程运行时读不到 process.env 里的渠道值（打包产物在用户机器上
++      // 无这些环境变量），故与 renderer 同款在构建期内联。server.ts 据此构造
++      // OPENCODE_CONFIG_CONTENT 注入内核 sidecar，使 App 默认走内置渠道。三者缺失即空串，
++      // server.ts 会跳过注入、退回 opencode 原生行为（不破坏 dev）。
++      "import.meta.env.NEWAPI_BASE_URL": JSON.stringify(process.env.NEWAPI_BASE_URL ?? ""),
++      "import.meta.env.NEWAPI_API_KEY": JSON.stringify(process.env.NEWAPI_API_KEY ?? ""),
++      "import.meta.env.NEWAPI_MODEL": JSON.stringify(process.env.NEWAPI_MODEL ?? ""),
+     },
+     build: {
+       rollupOptions: {
+diff --git a/packages/desktop/src/main/env.d.ts b/packages/desktop/src/main/env.d.ts
+index d69e6fe..4c90be2 100644
+--- a/packages/desktop/src/main/env.d.ts
++++ b/packages/desktop/src/main/env.d.ts
+@@ -1,5 +1,10 @@
+ interface ImportMetaEnv {
+   readonly OPENCODE_CHANNEL: string
++  // [cx] 内置渠道锁定：构建期内联的 newapi 渠道值，供主进程启动内核 sidecar 时
++  // 拼装 OPENCODE_CONFIG_CONTENT，使桌面产物默认走内置渠道。缺失即空串。
++  readonly NEWAPI_BASE_URL: string
++  readonly NEWAPI_API_KEY: string
++  readonly NEWAPI_MODEL: string
+ }
+ 
+ interface ImportMeta {
+diff --git a/packages/desktop/src/main/server.ts b/packages/desktop/src/main/server.ts
+index b213dbc..9cb255c 100644
+--- a/packages/desktop/src/main/server.ts
++++ b/packages/desktop/src/main/server.ts
+@@ -207,6 +207,30 @@ export async function checkHealth(url: string, password?: string | null): Promis
+   }
+ }
+ 
++// [cx] US-003/US-008: 内置渠道「默认注入」。渠道值在构建期由 electron.vite 的 main.define
++// 内联进 import.meta.env（主进程运行时读不到 process.env 里的这些值）。三者齐备时构造一份
++// opencode config，经 OPENCODE_CONFIG_CONTENT 传给内核 sidecar。该变量在内核 config 合并链里
++// 排在全局 / 项目配置之后，故注入的 newapi provider 与默认 model 会覆盖用户同名配置，实现
++// 开箱即走内置渠道；值缺失（如 dev）则不注入，退回原生行为。结构对齐 brand/opencode.template.json。
++function buildChannelConfigContent(): string | undefined {
++  const baseURL = import.meta.env.NEWAPI_BASE_URL
++  const apiKey = import.meta.env.NEWAPI_API_KEY
++  const model = import.meta.env.NEWAPI_MODEL
++  if (!baseURL || !apiKey || !model) return undefined
++  return JSON.stringify({
++    $schema: "https://opencode.ai/config.json",
++    model: `newapi/${model}`,
++    provider: {
++      newapi: {
++        npm: "@ai-sdk/openai-compatible",
++        name: "内置渠道",
++        options: { baseURL, apiKey },
++        models: { [model]: { name: "内置模型" } },
++      },
++    },
++  })
++}
++
+ function createSidecarEnv(): Record<string, string> {
+   const env = Object.fromEntries(
+     Object.entries(process.env).flatMap(([key, value]) => (value === undefined ? [] : [[key, String(value)]])),
+@@ -214,6 +238,9 @@ function createSidecarEnv(): Record<string, string> {
+   delete env.DEBUG
+   if (process.platform === "linux") delete env.LD_PRELOAD
+   if (!app.isPackaged) env.OPENCODE_DISABLE_CHANNEL_DB = "1"
++  // [cx] 默认注入内置渠道（仅当构建期内联了完整渠道值时生效）。
++  const channelConfig = buildChannelConfigContent()
++  if (channelConfig) env.OPENCODE_CONFIG_CONTENT = channelConfig
+   return env
+ }
+ 
