@@ -72,6 +72,10 @@ new-api 三类凭据，权限从大到小，**只有 API Token 能进 App**：
 
 ## 五、new-api 二开（你负责，我给接口契约）
 
+> **正式接口契约见 [`brand/docs/api-app-profile.md`](brand/docs/api-app-profile.md)（US-005 产出）。**
+> 该文档是 App 端与 new-api 二开之间的完整只读接口契约，标注「后端后续实现」，App 端按此对接。
+> 下方为要点摘录，字段/语义/安全约束以契约文档为准。
+
 **新增只读接口（建议合并为一个，减少接口数）：**
 
 ```
@@ -79,20 +83,22 @@ GET /api/app/profile
   鉴权：Authorization: Bearer sk-…   （走 token 鉴权中间件）
   逻辑：由 sk- 定位 token 记录 → 拿 user_id → 查 user 表
   返回：{
-    username,        // 用户名
-    avatar,          // 头像 URL
-    quota,           // 账号总额度
-    used_quota,      // 账号已用
-    token_remain,    // 这个 key 自己的剩余额度
-    token_used,      // 这个 key 自己的已用
-    unlimited        // 是否不限额
+    username,          // 用户名
+    avatar,            // 头像 URL
+    quota,             // 账户总额度
+    used_quota,        // 账户已用
+    token_remain,      // 这个 key 自己的剩余额度
+    token_used,        // 这个 key 自己的已用
+    token_used_today,  // 这个 key 今日消耗
+    unlimited          // 是否不限额
   }
   安全：只返回该 token 本人信息，不接受任意 user_id 入参
 ```
 
 **模型列表：** 优先用 OpenAI 兼容的 `GET /v1/models`（带 sk-）。
 - 待确认：你的 new-api `/v1/models` 是否**按 key 返回该 key 可用模型**（而非全站模型）。
-- 若不区分，则二开加接口返回「该 key 绑定的模型」。
+- 若已按 token `model_limits` 过滤 → App 直接用 `/v1/models`，无需新增接口。
+- 若不区分 → 二开追加 `GET /api/app/models` 返回「该 key 绑定的模型」（OpenAI 兼容形态，契约见文档第 6 节）。
 
 **充值：** 后续细化（充值页免登录链接 / 带身份跳转）。
 
