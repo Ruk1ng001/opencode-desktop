@@ -1,25 +1,28 @@
-# 04-channel-keys-store —— 本地多 key 列表存储模型（US-003）
+# 04-channel-keys-store —— 本地多 key 列表存储模型（US-003 / US-009）
 #
 # 职责：为「多 key 内置渠道」提供本地持久化的数据层与读写封装，供后续
 # key 列表 UI / 切换联动 / 内核注入改造（token 来源改为读本地激活 key）复用。
 #   1. store-keys.ts —— 新增 store 键常量 CHANNEL_KEYS_KEY（值为 ChannelKeysState）。
 #   2. store-channel-keys.ts（新增）—— 读写封装：
-#      - 类型 ChannelKey { id, label, key, baseURL } 与 ChannelKeysState { keys, activeKeyId }。
+#      - 类型 ChannelKey { id, label, key, baseURL, models? } 与 ChannelKeysState { keys, activeKeyId }。
 #      - readChannelKeysState / readActiveChannelKey / addChannelKey / removeChannelKey /
-#        updateChannelKeyLabel / setActiveChannelKey。
+#        updateChannelKeyLabel / setActiveChannelKey / setChannelKeyModels。
 #      - 复用既有 electron-store（store.ts），数据写在默认 settings store，明文仅存本地。
 #      - 无 key 时读取激活项返回 null，不报错（读取做了结构校验与容错）。
+#   US-009 增补：ChannelKey 新增可选 models（切换激活 key 时拉该 key 的 /v1/models 缓存），
+#   新增 setChannelKeyModels(id, models) 落盘；读取时对 models 做规整（只留字符串、去重、
+#   脏数据归 undefined），供 server.ts 构造内核 config 时注入「可选模型」。
 #
 # 安全底线：key 明文仅存本地用户设备，绝不上传 / 绝不写日志；本模块不打印任何 key 值。
 # 依赖：独立文件，不与 01/02/03 共享文件，可在其之后按序应用。
-# 应用（在 opencode/ 内，基线为 brand/BASE_SHA，按 01→02→03→04 顺序）：
+# 应用（在 opencode/ 内，基线为 brand/BASE_SHA，按 01→02→03→04→05 顺序）：
 #   git -C opencode apply --3way brand/patches/04-channel-keys-store.patch
 diff --git a/packages/desktop/src/main/store-channel-keys.ts b/packages/desktop/src/main/store-channel-keys.ts
 new file mode 100644
-index 000000000..3194aac68
+index 000000000..1186a277a
 --- /dev/null
 +++ b/packages/desktop/src/main/store-channel-keys.ts
-@@ -0,0 +1,111 @@
+@@ -0,0 +1,135 @@
 +// [cx] US-003: 本地 key 列表存储模型 —— 多渠道 API Key 的持久化读写封装。
 +//
 +// 目的：让用户导入的多个 `sk-…` API Token 持久保存在本地，重启 App 后仍在，
@@ -43,11 +46,15 @@ index 000000000..3194aac68
 +import { CHANNEL_KEYS_KEY } from "./store-keys"
 +
 +// 单个渠道 key 条目。`key` 为 new-api 的 API Token（`sk-…`），仅本地持有。
++// [cx] US-009: 新增可选 `models` —— 切换激活 key 时拉取该 key 的 /v1/models 得到的可用
++// 模型 id 列表，落盘缓存，供 server.ts 构造内核 config 时注入「内核可选模型」。老数据无此
++// 字段时按缺省（undefined）处理，读写全程做防御性校验。
 +export type ChannelKey = {
 +  id: string
 +  label: string
 +  key: string
 +  baseURL: string
++  models?: string[]
 +}
 +
 +// 本地存储的完整结构。activeKeyId 指向 keys 中当前激活项的 id；无激活项时为 null。
@@ -63,7 +70,7 @@ index 000000000..3194aac68
 +  const raw = getStore().get(CHANNEL_KEYS_KEY)
 +  if (!raw || typeof raw !== "object") return { ...EMPTY_STATE }
 +  const record = raw as Partial<ChannelKeysState>
-+  const keys = Array.isArray(record.keys) ? record.keys.filter(isChannelKey) : []
++  const keys = Array.isArray(record.keys) ? record.keys.filter(isChannelKey).map(normalizeChannelKey) : []
 +  const activeKeyId =
 +    typeof record.activeKeyId === "string" && keys.some((item) => item.id === record.activeKeyId)
 +      ? record.activeKeyId
@@ -91,6 +98,15 @@ index 000000000..3194aac68
 +  const activeKeyId = state.activeKeyId ?? entry.id
 +  writeChannelKeysState({ keys, activeKeyId })
 +  return entry
++}
++
++// [cx] US-009: 更新指定 id 的 key 的可用模型列表（切换激活 key 后拉 /v1/models 得到）。
++// 只保留字符串型 id、去重；id 不存在时静默忽略，不报错。models 仅是可选缓存，不含敏感信息。
++export function setChannelKeyModels(id: string, models: string[]): void {
++  const state = readChannelKeysState()
++  const cleaned = Array.from(new Set(models.filter((m): m is string => typeof m === "string" && m.length > 0)))
++  const keys = state.keys.map((item) => (item.id === id ? { ...item, models: cleaned } : item))
++  writeChannelKeysState({ keys, activeKeyId: state.activeKeyId })
 +}
 +
 +// 删除指定 id 的 key。若删的是当前激活项，激活项回退到列表首个剩余 key（无剩余则为 null）。
@@ -130,6 +146,17 @@ index 000000000..3194aac68
 +    typeof record.key === "string" &&
 +    typeof record.baseURL === "string"
 +  )
++}
++
++// [cx] US-009: 规整单条 key 的 models 字段——只保留字符串型、去重；缺省或脏数据归 undefined。
++// 读取时统一走此函数，避免脏 models 流进 server.ts 构造 config。
++function normalizeChannelKey(entry: ChannelKey): ChannelKey {
++  if (!Array.isArray(entry.models)) {
++    if (entry.models === undefined) return entry
++    return { ...entry, models: undefined }
++  }
++  const cleaned = Array.from(new Set(entry.models.filter((m): m is string => typeof m === "string" && m.length > 0)))
++  return { ...entry, models: cleaned }
 +}
 diff --git a/packages/desktop/src/main/store-keys.ts b/packages/desktop/src/main/store-keys.ts
 index 506924b74..8e727adb4 100644

@@ -9,8 +9,12 @@
 #      传给内核 sidecar,在 config 合并链末端覆盖用户同名配置,实现「默认注入内置渠道」。
 #      baseURL / apiKey 优先取「本地激活 key」(US-003 的 store-channel-keys,主进程侧
 #      electron-store,直接同步读、无需 IPC);本地无激活 key 时回退到构建期内置默认值;
-#      两者都无则不注入,退回 opencode 原生行为(不破坏本地开发)。model 无 per-key 字段,
-#      始终取构建期内置默认。切换激活 key 后须重启 sidecar 才生效(US-002 结论)。
+#      两者都无则不注入,退回 opencode 原生行为(不破坏本地开发)。
+#      US-009：可选模型集合优先取激活 key 缓存的 models(切换激活 key 时拉该 key 的 /v1/models
+#      落盘,见 store-channel-keys 的 setChannelKeyModels);无缓存时回退构建期内置 NEWAPI_MODEL
+#      合成单条。列出的每个模型都写进 provider.newapi.models,成为内核里「该 key 的可选模型」;
+#      默认 model 取 NEWAPI_MODEL(若在列表内)否则列表首项。切换激活 key / 更新模型集合后须重启
+#      sidecar 才生效(US-002 结论)。
 #   3. main/env.d.ts —— 为上述内联变量补 ImportMetaEnv 类型声明,保证 typecheck 通过。
 #
 # 依赖:叠加在 02-balance-newapi 之上(共享 electron.vite.config.ts 的 newapiDefine);
@@ -52,7 +56,7 @@ index d69e6feec..4c90be269 100644
  
  interface ImportMeta {
 diff --git a/packages/desktop/src/main/server.ts b/packages/desktop/src/main/server.ts
-index b213dbc82..259db3aef 100644
+index b213dbc82..aa319d4b2 100644
 --- a/packages/desktop/src/main/server.ts
 +++ b/packages/desktop/src/main/server.ts
 @@ -6,6 +6,7 @@ import { getLogger } from "./logging"
@@ -63,7 +67,7 @@ index b213dbc82..259db3aef 100644
  
  export type HealthCheck = { wait: Promise<void> }
  
-@@ -207,6 +208,40 @@ export async function checkHealth(url: string, password?: string | null): Promis
+@@ -207,6 +208,55 @@ export async function checkHealth(url: string, password?: string | null): Promis
    }
  }
  
@@ -78,24 +82,39 @@ index b213dbc82..259db3aef 100644
 +//   同在主进程，故此处直接 readActiveChannelKey() 同步读取，无需经 IPC / renderer 中转（renderer
 +//   若要改激活项，也是经 IPC 落到同一个 store，主进程下次 spawn sidecar 时即读到新值）。
 +//   本地无激活 key 时回退到构建期内联的内置默认值（import.meta.env.NEWAPI_*，见 electron.vite
-+//   main.define）；两者都无则整体缺失、不注入。model 无对应的 per-key 字段（ChannelKey 只含
-+//   id/label/key/baseURL），故始终取构建期内置默认。
++//   main.define）；两者都无则整体缺失、不注入。
 +//   注意：内核 config 是启动期一次性注入（US-002 结论），切换激活 key 后须重启 sidecar 才生效。
++//
++// [cx] US-009 可选模型注入 —— 模型列表来源：
++//   优先取激活 key 缓存的 models（切换激活 key 时拉该 key 的 /v1/models 落盘，见 store-channel-keys
++//   的 setChannelKeyModels）；该 key 尚无缓存时回退构建期内置 NEWAPI_MODEL 合成单条。列出的每个
++//   模型都写进 provider.newapi.models，成为内核里「该 key 的可选模型」；默认 model 取 NEWAPI_MODEL
++//   （若在列表内）否则列表首项。重建 config 后须重启 sidecar 才让新模型集合生效。
 +function buildChannelConfigContent(): string | undefined {
 +  const activeKey = readActiveChannelKey()
 +  const baseURL = activeKey?.baseURL || import.meta.env.NEWAPI_BASE_URL
 +  const apiKey = activeKey?.key || import.meta.env.NEWAPI_API_KEY
-+  const model = import.meta.env.NEWAPI_MODEL
-+  if (!baseURL || !apiKey || !model) return undefined
++  if (!baseURL || !apiKey) return undefined
++
++  // 可选模型集合：激活 key 缓存的 models 优先；无缓存回退构建期内置默认单条。
++  const builtinModel = import.meta.env.NEWAPI_MODEL
++  const cached = activeKey?.models?.filter((m) => typeof m === "string" && m.length > 0) ?? []
++  const modelList = cached.length > 0 ? cached : builtinModel ? [builtinModel] : []
++  if (modelList.length === 0) return undefined
++
++  // 默认模型：内置默认在列表内则用它，否则用列表首项。
++  const defaultModel = builtinModel && modelList.includes(builtinModel) ? builtinModel : modelList[0]
++  const models = Object.fromEntries(modelList.map((id) => [id, { name: id }]))
++
 +  return JSON.stringify({
 +    $schema: "https://opencode.ai/config.json",
-+    model: `newapi/${model}`,
++    model: `newapi/${defaultModel}`,
 +    provider: {
 +      newapi: {
 +        npm: "@ai-sdk/openai-compatible",
 +        name: "内置渠道",
 +        options: { baseURL, apiKey },
-+        models: { [model]: { name: "内置模型" } },
++        models,
 +      },
 +    },
 +  })
@@ -104,7 +123,7 @@ index b213dbc82..259db3aef 100644
  function createSidecarEnv(): Record<string, string> {
    const env = Object.fromEntries(
      Object.entries(process.env).flatMap(([key, value]) => (value === undefined ? [] : [[key, String(value)]])),
-@@ -214,6 +249,9 @@ function createSidecarEnv(): Record<string, string> {
+@@ -214,6 +264,9 @@ function createSidecarEnv(): Record<string, string> {
    delete env.DEBUG
    if (process.platform === "linux") delete env.LD_PRELOAD
    if (!app.isPackaged) env.OPENCODE_DISABLE_CHANNEL_DB = "1"

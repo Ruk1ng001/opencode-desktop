@@ -1,11 +1,11 @@
 diff --git a/packages/desktop/src/renderer/balance/balance-panel.tsx b/packages/desktop/src/renderer/balance/balance-panel.tsx
 new file mode 100644
-index 000000000..81223c712
+index 000000000..98d1fa55a
 --- /dev/null
 +++ b/packages/desktop/src/renderer/balance/balance-panel.tsx
-@@ -0,0 +1,857 @@
+@@ -0,0 +1,1325 @@
 +// [cx] 独立账户面板 —— 对接 new-api 取用户名/头像/额度/用量（US-006）+ 充值入口（US-007）
-+//     + key 列表卡片 UI + 顶部账户汇总（US-008）
++//     + key 列表卡片 UI + 顶部账户汇总（US-008）+ 增删改 key 与手动切换激活 key（US-009）
 +//
 +// 设计约束（见 TODO.md / brand/docs/api-app-profile.md / 验收标准）：
 +//   - 独立展示区域，与 opencode 原有聊天 UI 组件完全解耦；本文件不 import 任何
@@ -18,21 +18,33 @@ index 000000000..81223c712
 +//     新端点走 token 鉴权中间件（同 /v1/*），由 sk- 定位 token → 本人 profile
 +//     （见 brand/docs/api-app-profile.md）。
 +//   - [cx] US-008: 面板不再只看构建期注入的单 key，而是读 US-003 本地 key 列表
-+//     （主进程 store-channel-keys 写入的 `channelKeys`），renderer 经 window.api.storeGet
-+//     同步读到。顶部汇总区展示「当前激活 key」账户的头像/用户名/账户总额度/账户已用
-+//     （进度条）+ 一键刷新；下方逐 key 卡片，每张卡片按各自 key 独立调 /api/app/profile
-+//     （不同 key 可能是不同账户），激活 key 卡片有明显选中态。本地无 key 列表时回退到
-+//     构建期注入的内置渠道（NEWAPI_BASE_URL / NEWAPI_API_KEY）合成单条，保持面板可用。
++//     （主进程 store-channel-keys 写入的 `channelKeys`）。顶部汇总区展示「当前激活 key」
++//     账户的头像/用户名/账户总额度/账户已用（进度条）+ 一键刷新；下方逐 key 卡片，
++//     每张卡片按各自 key 独立调 /api/app/profile（不同 key 可能是不同账户），激活 key
++//     卡片有明显选中态。本地无 key 列表时回退到构建期注入的内置渠道合成单条。
++//   - [cx] US-009: 面板可管理本地 key 列表：
++//       · 新增 key —— 粘贴 sk-…（可选 label / baseURL），经 channelKeysAdd 写入本地列表；
++//       · 删除 key —— 二次确认后经 channelKeysRemove 删除（删激活项时主进程侧激活回退首项/置空）；
++//       · 修改 label —— 内联编辑保存，经 channelKeysUpdateLabel；
++//       · 点击非激活卡片切换激活 key —— 经 channelKeysSetActive 更新 activeKeyId，随后带该
++//         key 的 sk- 调 /v1/models 拉取可用模型并经 channelKeysSetModels 落盘（供内核 config
++//         注入「可选模型」）；因内核 config 是启动期一次性注入（US-002 结论：必须重启 sidecar），
++//         切换后给出重启提示（横幅 + 立即重启按钮），提醒当前会话将中断，由用户决定何时重启。
++//     所有 key 的增删改切换都走主进程数据层专用 IPC（window.api.channelKeys*），不用通用
++//     storeSet（那会把整个对象存成字符串、破坏主进程侧对象读取）。
 +//   - baseURL 与鉴权凭据：优先取本地 key 条目（每张卡片各自的 baseURL/key），
 +//     回退构建期注入的同名变量（NEWAPI_BASE_URL / NEWAPI_API_KEY），本文件不硬编码任何地址/密钥。
 +//   - 各数据状态各有明确提示：加载中 / 请求失败 / 未配置凭据 / 就绪。
 +//   - 全部网络请求包在 try/catch 内，任何错误都落入 error 态，绝不抛出，
 +//     不阻塞主程序，也不让面板崩溃。
 +//   - 全部中文文案。样式用内联对象，不依赖上游 tailwind / 主题变量。
-+//   - US-007 充值入口：面板含「充值」按钮，点击后经 window.api.openLink（→ 主进程
-+//     shell.openExternal）在系统默认浏览器打开 new-api 充值页面。充值 URL 走注入变量
-+//     NEWAPI_TOPUP_URL，缺省回退到 new-api 站点根。客户端内不实现任何支付逻辑。
++//   - US-007/US-010 充值入口：面板含「充值」按钮，点击后经 window.api.openLink（→ 主进程
++//     shell.openExternal）在系统默认浏览器打开 new-api 充值页面。充值 URL 优先用注入变量
++//     NEWAPI_TOPUP_URL，缺省回退到「由当前激活 key 的 baseURL 推导的站点根」（US-010：随
++//     切换激活 key 响应式变化，激活项无 baseURL 时再回退构建期 NEWAPI_BASE_URL）。URL 缺失
++//     时按钮禁用并提示。客户端内不实现任何支付逻辑。
 +//   - 安全底线：key 明文仅本地持有，展示层一律打码（maskKey），绝不整段渲染或写日志。
++//     key 明文输入（新增表单）只在内存/本地 store 流转，不打印、不写日志、不上传。
 +
 +import { createSignal, onMount, For, Show, Switch, Match } from "solid-js"
 +import type { JSX } from "solid-js"
@@ -46,13 +58,6 @@ index 000000000..81223c712
 +// 若目标站点改了该值，展示的货币金额会有偏差——额度原值同时展示以便对照。
 +const QUOTA_PER_UNIT = 500000
 +
-+// [cx] US-008: 本地 key 列表存储位置。与主进程 store-channel-keys.ts / store-keys.ts
-+// 保持一致的字面量（renderer 不 import 主进程模块，故内联；同 i18n 里直接用
-+// "opencode.global.dat" 的模式）。主进程以对象形式 set 到该键，store-get IPC 返回其
-+// JSON.stringify 字符串，本文件解析回对象。
-+const SETTINGS_STORE_NAME = "opencode.settings"
-+const CHANNEL_KEYS_STORE_KEY = "channelKeys"
-+
 +// 从渠道 baseURL（US-003 的 NEWAPI_BASE_URL，如 https://host/v1）推导 new-api 站点根，
 +// 用户接口挂在站点根 /api 下而非 /v1 渠道端点下。
 +function deriveApiBase(baseURL: string): string {
@@ -60,13 +65,22 @@ index 000000000..81223c712
 +  return trimmed.replace(/\/v1$/, "")
 +}
 +
-+// [cx] US-007: 解析充值页面 URL。优先用注入变量 NEWAPI_TOPUP_URL（构建期由
-+// electron.vite renderer.define 从 process.env 注入），缺省回退到 new-api 站点根
-+// （由渠道 baseURL 推导）。两者都缺失时返回空串，此时不渲染充值入口。
-+function resolveTopupUrl(): string {
++// [cx] US-009: 由渠道 baseURL 推导 OpenAI 兼容 /v1/models 端点。baseURL 通常已以 /v1 结尾
++// （如 https://host/v1）；无 /v1 后缀时补上，保证命中 OpenAI 兼容的 /v1/models。
++function deriveModelsUrl(baseURL: string): string {
++  const trimmed = baseURL.trim().replace(/\/+$/, "")
++  if (/\/v1$/.test(trimmed)) return `${trimmed}/models`
++  return `${trimmed}/v1/models`
++}
++
++// [cx] US-007/US-010: 解析充值页面 URL。优先用注入变量 NEWAPI_TOPUP_URL（构建期由
++// electron.vite renderer.define 从 process.env 注入），缺省回退到「由激活 key 的 baseURL
++// 推导的站点根」（US-010：随激活 key 变化，非构建期常量）。activeBaseURL 为空时再回退到
++// 构建期注入的 NEWAPI_BASE_URL，两者都缺失时返回空串，此时充值入口禁用并提示。
++function resolveTopupUrl(activeBaseURL?: string): string {
 +  const topup = (import.meta.env.NEWAPI_TOPUP_URL ?? "").trim()
 +  if (topup) return topup
-+  const baseURL = import.meta.env.NEWAPI_BASE_URL ?? ""
++  const baseURL = (activeBaseURL ?? "").trim() || (import.meta.env.NEWAPI_BASE_URL ?? "")
 +  return deriveApiBase(baseURL)
 +}
 +
@@ -86,11 +100,6 @@ index 000000000..81223c712
 +// 额度 → 美元金额（两位小数）。
 +function formatCurrency(quotaUnits: number): string {
 +  return "$" + (quotaUnits / QUOTA_PER_UNIT).toFixed(2)
-+}
-+
-+// 额度原值本地化（千分位）。
-+function formatUnits(quotaUnits: number): string {
-+  return quotaUnits.toLocaleString("zh-CN")
 +}
 +
 +// [cx] US-006: 无头像时的占位首字（取用户名首个字符，空则用「?」）。
@@ -155,14 +164,17 @@ index 000000000..81223c712
 +  | { status: "error"; message: string }
 +  | ({ status: "ready" } & ProfileData)
 +
-+// [cx] US-008: 已解析的可用 key 条目（本地 store 或构建期回退）。key 为明文，仅本地持有，
-+// 展示前必经 maskKey 打码。
++// [cx] US-008/US-009: 已解析的可用 key 条目（本地 store 或构建期回退）。key 为明文，仅本地
++// 持有，展示前必经 maskKey 打码。builtin=true 表示这是构建期注入的内置渠道合成条目（不在
++// 本地 store，不可增删改切换）。baseURL 为「查询用有效地址」（条目自带 or 回退构建期变量）。
 +type ResolvedKey = {
 +  id: string
 +  label: string
 +  key: string
 +  baseURL: string
 +  isActive: boolean
++  builtin: boolean
++  models: string[]
 +}
 +
 +// 本地 store 里的原始条目（与主进程 store-channel-keys.ts 的 ChannelKey 对齐）。
@@ -171,6 +183,7 @@ index 000000000..81223c712
 +  label: string
 +  key: string
 +  baseURL: string
++  models?: string[]
 +}
 +
 +function isStoredChannelKey(value: unknown): value is StoredChannelKey {
@@ -184,53 +197,61 @@ index 000000000..81223c712
 +  )
 +}
 +
-+// [cx] US-008: 读本地 key 列表（US-003 主进程写入的 `channelKeys`）。经 store-get IPC 拿到
-+// JSON 字符串再解析；任何异常/脏数据都吞掉返回 null，绝不抛出。
-+async function readChannelKeysFromStore(): Promise<{ keys: StoredChannelKey[]; activeKeyId: string | null } | null> {
++function normalizeModels(value: unknown): string[] {
++  if (!Array.isArray(value)) return []
++  return value.filter((m): m is string => typeof m === "string" && m.length > 0)
++}
++
++type ChannelState = { keys: StoredChannelKey[]; activeKeyId: string | null }
++
++// [cx] US-009: 读本地 key 列表状态。经专用 IPC channelKeysList 拿到 JSON 字符串再解析；
++// 任何异常/脏数据都吞掉返回空状态，绝不抛出。
++async function loadChannelState(): Promise<ChannelState> {
 +  try {
-+    const raw = await window.api.storeGet(SETTINGS_STORE_NAME, CHANNEL_KEYS_STORE_KEY)
-+    if (!raw) return null
++    const raw = await window.api.channelKeysList()
++    if (!raw) return { keys: [], activeKeyId: null }
 +    const parsed = JSON.parse(raw) as { keys?: unknown; activeKeyId?: unknown }
-+    if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.keys)) return null
-+    const keys = parsed.keys.filter(isStoredChannelKey)
++    if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.keys)) {
++      return { keys: [], activeKeyId: null }
++    }
++    const keys = parsed.keys.filter(isStoredChannelKey).map((k) => ({ ...k, models: normalizeModels(k.models) }))
 +    const activeKeyId =
 +      typeof parsed.activeKeyId === "string" && keys.some((k) => k.id === parsed.activeKeyId)
 +        ? parsed.activeKeyId
 +        : null
 +    return { keys, activeKeyId }
 +  } catch {
-+    return null
++    return { keys: [], activeKeyId: null }
 +  }
 +}
 +
-+// [cx] US-008: 解析出面板要展示的 key 列表。优先本地 store（多渠道），其中有凭据的条目
-+// 才进列表；本地无 key 时回退到构建期注入的内置渠道合成单条，保证面板仍可用。
-+async function resolveKeyList(): Promise<ResolvedKey[]> {
-+  const stored = await readChannelKeysFromStore()
-+  if (stored && stored.keys.length > 0) {
-+    const usable = stored.keys.filter((k) => k.baseURL && k.key)
-+    if (usable.length > 0) {
-+      return usable.map((k) => ({
-+        id: k.id,
-+        label: k.label || "未命名 key",
-+        key: k.key,
-+        baseURL: k.baseURL,
-+        isActive: k.id === stored.activeKeyId,
-+      }))
-+    }
++// [cx] US-008/US-009: 把 store 状态解析成面板要展示的 key 列表。本地有 key 时全部展示
++// （含缺 baseURL 的条目：查询用地址回退构建期变量），并标注激活项；本地无 key 时回退到构建期
++// 注入的内置渠道合成单条（builtin，不可增删改切换），保证面板仍可用。
++function resolveKeyList(state: ChannelState): ResolvedKey[] {
++  const fallbackBase = import.meta.env.NEWAPI_BASE_URL ?? ""
++  if (state.keys.length > 0) {
++    return state.keys.map((k) => ({
++      id: k.id,
++      label: k.label || "未命名 key",
++      key: k.key,
++      baseURL: k.baseURL || fallbackBase,
++      isActive: k.id === state.activeKeyId,
++      builtin: false,
++      models: normalizeModels(k.models),
++    }))
 +  }
-+  // 回退：本地无可用 key 列表时，用构建期注入的内置渠道合成单条（激活）。
-+  const baseURL = import.meta.env.NEWAPI_BASE_URL ?? ""
 +  const apiKey = import.meta.env.NEWAPI_API_KEY ?? ""
-+  if (baseURL && apiKey) {
-+    return [{ id: "__builtin__", label: "内置渠道", key: apiKey, baseURL, isActive: true }]
++  if (fallbackBase && apiKey) {
++    return [
++      { id: "__builtin__", label: "内置渠道", key: apiKey, baseURL: fallbackBase, isActive: true, builtin: true, models: [] },
++    ]
 +  }
 +  return []
 +}
 +
-+// [cx] US-008: 按指定 key/baseURL 拉取 profile。任何异常都被捕获并转成 error 态返回，
-+// 本函数永不抛出。相比旧的 fetchProfile()，凭据由参数传入（逐 key 查询），不再直接读
-+// import.meta.env——不同 key 可能是不同账户。
++// [cx] US-006/US-008: 按指定 key/baseURL 拉取 profile。任何异常都被捕获并转成 error 态返回，
++// 本函数永不抛出。凭据由参数传入（逐 key 查询）——不同 key 可能是不同账户。
 +async function fetchProfileWith(baseURL: string, apiKey: string): Promise<KeyProfileState> {
 +  if (!baseURL || !apiKey) return { status: "error", message: "缺少渠道凭据" }
 +  try {
@@ -269,13 +290,38 @@ index 000000000..81223c712
 +  }
 +}
 +
++// [cx] US-009: 拉取某 key 的可用模型列表（OpenAI 兼容 /v1/models，带 Bearer sk-）。
++// 返回模型 id 字符串数组；任何异常/非 200/脏响应都返回空数组，本函数永不抛出。
++// 用于「切换激活 key 后更新内核可选模型」——结果落盘进 key 条目，server.ts 构造 config 时注入。
++async function fetchModelsWith(baseURL: string, apiKey: string): Promise<string[]> {
++  if (!baseURL || !apiKey) return []
++  try {
++    const res = await fetch(deriveModelsUrl(baseURL), {
++      headers: {
++        Authorization: `Bearer ${apiKey}`,
++        Accept: "application/json",
++      },
++    })
++    if (!res.ok) return []
++    const body = (await res.json()) as { data?: unknown } | unknown[]
++    const list = Array.isArray(body) ? body : Array.isArray((body as { data?: unknown }).data) ? (body as { data: unknown[] }).data : []
++    const ids = list
++      .map((m) => (typeof m === "string" ? m : m && typeof m === "object" ? (m as { id?: unknown }).id : undefined))
++      .filter((id): id is string => typeof id === "string" && id.length > 0)
++    return Array.from(new Set(ids))
++  } catch {
++    return []
++  }
++}
++
 +// [cx] US-007/US-008: 入口按钮身份展示用——解析当前激活 key 的凭据（本地激活项优先，
 +// 无则回退列表首个，再无则回退构建期注入变量）。返回 null 表示无任何可用凭据。
 +async function resolveActiveCreds(): Promise<{ baseURL: string; apiKey: string } | null> {
-+  const stored = await readChannelKeysFromStore()
-+  if (stored && stored.keys.length > 0) {
-+    const active = stored.keys.find((k) => k.id === stored.activeKeyId) ?? stored.keys[0]
-+    if (active && active.baseURL && active.key) return { baseURL: active.baseURL, apiKey: active.key }
++  const state = await loadChannelState()
++  if (state.keys.length > 0) {
++    const active = state.keys.find((k) => k.id === state.activeKeyId) ?? state.keys[0]
++    const baseURL = active.baseURL || (import.meta.env.NEWAPI_BASE_URL ?? "")
++    if (active && baseURL && active.key) return { baseURL, apiKey: active.key }
 +  }
 +  const baseURL = import.meta.env.NEWAPI_BASE_URL ?? ""
 +  const apiKey = import.meta.env.NEWAPI_API_KEY ?? ""
@@ -483,6 +529,9 @@ index 000000000..81223c712
 +
 +// [cx] US-008: key 卡片列表区。
 +const sectionTitleStyle: JSX.CSSProperties = {
++  display: "flex",
++  "align-items": "center",
++  "justify-content": "space-between",
 +  "font-size": "12px",
 +  color: "#9ca3af",
 +  "margin-bottom": "10px",
@@ -500,6 +549,11 @@ index 000000000..81223c712
 +const activeCardStyle: JSX.CSSProperties = {
 +  border: "1px solid rgba(59,130,246,0.7)",
 +  background: "rgba(59,130,246,0.10)",
++}
++
++// [cx] US-009: 非激活卡片可点击切换，加指针光标暗示可交互。
++const clickableCardStyle: JSX.CSSProperties = {
++  cursor: "pointer",
 +}
 +
 +const cardHeadStyle: JSX.CSSProperties = {
@@ -543,7 +597,6 @@ index 000000000..81223c712
 +}
 +
 +const activeBadgeStyle: JSX.CSSProperties = {
-+  "margin-left": "auto",
 +  padding: "2px 8px",
 +  "border-radius": "9999px",
 +  background: "rgba(59,130,246,0.85)",
@@ -583,21 +636,164 @@ index 000000000..81223c712
 +  "margin-bottom": "8px",
 +}
 +
++// [cx] US-009: 卡片底部操作行（切换/编辑/删除）。
++const cardActionsStyle: JSX.CSSProperties = {
++  display: "flex",
++  "align-items": "center",
++  gap: "8px",
++  "margin-top": "12px",
++  "flex-wrap": "wrap",
++}
++
++const smallButtonStyle: JSX.CSSProperties = {
++  padding: "5px 10px",
++  "border-radius": "6px",
++  border: "1px solid rgba(255,255,255,0.14)",
++  background: "rgba(255,255,255,0.06)",
++  color: "#e5e5e5",
++  "font-size": "12px",
++  "font-weight": "500",
++  cursor: "pointer",
++}
++
++const dangerButtonStyle: JSX.CSSProperties = {
++  ...smallButtonStyle,
++  border: "1px solid rgba(239,68,68,0.5)",
++  background: "rgba(239,68,68,0.12)",
++  color: "#fca5a5",
++}
++
++const primarySmallButtonStyle: JSX.CSSProperties = {
++  ...smallButtonStyle,
++  border: "1px solid rgba(59,130,246,0.6)",
++  background: "rgba(59,130,246,0.85)",
++  color: "#ffffff",
++}
++
++const modelCountStyle: JSX.CSSProperties = {
++  "font-size": "11px",
++  color: "#9ca3af",
++  "margin-top": "8px",
++}
++
++// [cx] US-009: 内联编辑 label / 新增 key 表单用输入框。
++const inputStyle: JSX.CSSProperties = {
++  width: "100%",
++  "box-sizing": "border-box",
++  padding: "8px 10px",
++  "border-radius": "6px",
++  border: "1px solid rgba(255,255,255,0.14)",
++  background: "rgba(0,0,0,0.25)",
++  color: "#e5e5e5",
++  "font-size": "13px",
++  "margin-bottom": "8px",
++}
++
++const addFormStyle: JSX.CSSProperties = {
++  background: "rgba(255,255,255,0.03)",
++  border: "1px dashed rgba(255,255,255,0.16)",
++  "border-radius": "8px",
++  padding: "14px 16px",
++  "margin-top": "8px",
++  "margin-bottom": "8px",
++}
++
++// [cx] US-009: 切换激活后的重启提示横幅。内核 config 启动期一次性注入，须重启 sidecar 生效。
++const restartBannerStyle: JSX.CSSProperties = {
++  display: "flex",
++  "align-items": "center",
++  gap: "10px",
++  background: "rgba(234,179,8,0.12)",
++  border: "1px solid rgba(234,179,8,0.4)",
++  color: "#fde68a",
++  "border-radius": "8px",
++  padding: "10px 12px",
++  "margin-bottom": "16px",
++  "font-size": "12px",
++  "line-height": "1.5",
++}
++
++const bannerButtonStyle: JSX.CSSProperties = {
++  padding: "5px 10px",
++  "border-radius": "6px",
++  border: "1px solid rgba(234,179,8,0.6)",
++  background: "rgba(234,179,8,0.85)",
++  color: "#111827",
++  "font-size": "12px",
++  "font-weight": "600",
++  cursor: "pointer",
++  "white-space": "nowrap",
++}
++
 +// 账户已用占比（0~100，整数）。总额度为 0 时返回 0，避免除零。
 +function usedPercent(usedQuota: number, quota: number): number {
 +  if (quota <= 0) return 0
 +  return Math.min(100, Math.max(0, Math.round((usedQuota / quota) * 100)))
 +}
 +
-+// [cx] US-008: 单张 key 卡片。按各自 key 独立展示 profile（loading/error/ready）。
-+function KeyCard(props: { entry: ResolvedKey; state: KeyProfileState | undefined }) {
++// [cx] US-008/US-009: 单张 key 卡片。按各自 key 独立展示 profile（loading/error/ready），
++// 并提供切换激活 / 编辑 label / 删除操作（builtin 内置渠道条目不可管理）。
++function KeyCard(props: {
++  entry: ResolvedKey
++  state: KeyProfileState | undefined
++  switching: boolean
++  onActivate: (entry: ResolvedKey) => void
++  onSaveLabel: (id: string, label: string) => void
++  onRemove: (id: string) => void
++}) {
 +  const state = () => props.state ?? ({ status: "loading" } as KeyProfileState)
++  const [editing, setEditing] = createSignal(false)
++  const [labelDraft, setLabelDraft] = createSignal("")
++  const [confirmingDelete, setConfirmingDelete] = createSignal(false)
++
++  function startEdit() {
++    setLabelDraft(props.entry.label)
++    setEditing(true)
++  }
++  function saveEdit() {
++    props.onSaveLabel(props.entry.id, labelDraft().trim())
++    setEditing(false)
++  }
++
++  const manageable = () => !props.entry.builtin
++  const clickable = () => manageable() && !props.entry.isActive && !props.switching
++
 +  return (
-+    <div style={props.entry.isActive ? { ...cardStyle, ...activeCardStyle } : cardStyle}>
++    <div
++      style={
++        props.entry.isActive
++          ? { ...cardStyle, ...activeCardStyle }
++          : clickable()
++            ? { ...cardStyle, ...clickableCardStyle }
++            : cardStyle
++      }
++      onClick={() => {
++        // 仅在「非激活、可管理、未切换中、未处于内联编辑」时，点击卡片切换激活。
++        if (clickable() && !editing()) props.onActivate(props.entry)
++      }}
++    >
 +      <div style={cardHeadStyle}>
-+        <div>
-+          <div style={cardLabelStyle}>{props.entry.label}</div>
-+          <div style={cardKeyStyle}>{maskKey(props.entry.key)}</div>
++        <div style={{ "min-width": "0", flex: "1" }}>
++          <Show
++            when={editing()}
++            fallback={
++              <>
++                <div style={cardLabelStyle}>{props.entry.label}</div>
++                <div style={cardKeyStyle}>{maskKey(props.entry.key)}</div>
++              </>
++            }
++          >
++            {/* 内联编辑 label —— 点击输入区不触发卡片切换。 */}
++            <div onClick={(e) => e.stopPropagation()}>
++              <input
++                style={{ ...inputStyle, "margin-bottom": "0" }}
++                value={labelDraft()}
++                placeholder="key 名称"
++                onInput={(e) => setLabelDraft(e.currentTarget.value)}
++                aria-label="编辑 key 名称"
++              />
++            </div>
++          </Show>
 +        </div>
 +        <Show when={props.entry.isActive}>
 +          <span style={activeBadgeStyle}>激活</span>
@@ -605,6 +801,10 @@ index 000000000..81223c712
 +      </div>
 +
 +      <Switch>
++        <Match when={props.switching && !props.entry.isActive}>
++          <div style={cardStateStyle}>切换中…</div>
++        </Match>
++
 +        <Match when={state().status === "loading"}>
 +          <div style={cardStateStyle}>加载中…</div>
 +        </Match>
@@ -641,7 +841,161 @@ index 000000000..81223c712
 +          )}
 +        </Match>
 +      </Switch>
++
++      {/* [cx] US-009: 已缓存的可用模型数（切换激活时经 /v1/models 拉取落盘）。 */}
++      <Show when={props.entry.models.length > 0}>
++        <div style={modelCountStyle}>可用模型：{props.entry.models.length} 个</div>
++      </Show>
++
++      {/* [cx] US-009: 卡片操作行——切换/编辑/删除。内置渠道条目（builtin）不可管理。 */}
++      <Show when={manageable()}>
++        <div style={cardActionsStyle} onClick={(e) => e.stopPropagation()}>
++          <Show when={editing()} fallback={
++            <>
++              <Show when={!props.entry.isActive}>
++                <button
++                  type="button"
++                  style={primarySmallButtonStyle}
++                  disabled={props.switching}
++                  aria-disabled={props.switching}
++                  onClick={() => props.onActivate(props.entry)}
++                >
++                  {props.switching ? "切换中…" : "切换为激活"}
++                </button>
++              </Show>
++              <button type="button" style={smallButtonStyle} onClick={startEdit}>
++                编辑名称
++              </button>
++              <Show
++                when={confirmingDelete()}
++                fallback={
++                  <button type="button" style={dangerButtonStyle} onClick={() => setConfirmingDelete(true)}>
++                    删除
++                  </button>
++                }
++              >
++                <span style={{ "font-size": "12px", color: "#fca5a5" }}>确认删除？</span>
++                <button
++                  type="button"
++                  style={dangerButtonStyle}
++                  onClick={() => {
++                    setConfirmingDelete(false)
++                    props.onRemove(props.entry.id)
++                  }}
++                >
++                  确认
++                </button>
++                <button type="button" style={smallButtonStyle} onClick={() => setConfirmingDelete(false)}>
++                  取消
++                </button>
++              </Show>
++            </>
++          }>
++            <button type="button" style={primarySmallButtonStyle} onClick={saveEdit}>
++              保存
++            </button>
++            <button type="button" style={smallButtonStyle} onClick={() => setEditing(false)}>
++              取消
++            </button>
++          </Show>
++        </div>
++      </Show>
 +    </div>
++  )
++}
++
++// [cx] US-009: 新增 key 表单。粘贴 sk-…（必填）+ 可选 label / baseURL。key 明文只在内存流转，
++// 提交经 channelKeysAdd 写入本地 store；不打印、不写日志。
++function AddKeyForm(props: { onAdd: (input: { label: string; key: string; baseURL: string }) => Promise<void> }) {
++  const [open, setOpen] = createSignal(false)
++  const [key, setKey] = createSignal("")
++  const [label, setLabel] = createSignal("")
++  const [baseURL, setBaseURL] = createSignal("")
++  const [error, setError] = createSignal("")
++  const [saving, setSaving] = createSignal(false)
++
++  function reset() {
++    setKey("")
++    setLabel("")
++    setBaseURL("")
++    setError("")
++  }
++
++  async function submit() {
++    const k = key().trim()
++    if (!k) {
++      setError("请粘贴 API Key（sk-…）")
++      return
++    }
++    setSaving(true)
++    try {
++      await props.onAdd({ label: label().trim(), key: k, baseURL: baseURL().trim() })
++      reset()
++      setOpen(false)
++    } finally {
++      setSaving(false)
++    }
++  }
++
++  return (
++    <Show
++      when={open()}
++      fallback={
++        <button type="button" style={{ ...smallButtonStyle, width: "100%", padding: "8px" }} onClick={() => setOpen(true)}>
++          + 新增 key
++        </button>
++      }
++    >
++      <div style={addFormStyle}>
++        <input
++          style={inputStyle}
++          value={key()}
++          type="password"
++          autocomplete="off"
++          placeholder="API Key（sk-…，必填）"
++          onInput={(e) => setKey(e.currentTarget.value)}
++          aria-label="API Key"
++        />
++        <input
++          style={inputStyle}
++          value={label()}
++          placeholder="名称（可选）"
++          onInput={(e) => setLabel(e.currentTarget.value)}
++          aria-label="key 名称"
++        />
++        <input
++          style={inputStyle}
++          value={baseURL()}
++          placeholder="baseURL（可选，缺省用内置渠道地址）"
++          onInput={(e) => setBaseURL(e.currentTarget.value)}
++          aria-label="baseURL"
++        />
++        <Show when={error()}>
++          <div style={{ "font-size": "12px", color: "#fca5a5", "margin-bottom": "8px" }}>{error()}</div>
++        </Show>
++        <div style={{ display: "flex", gap: "8px" }}>
++          <button
++            type="button"
++            style={{ ...primarySmallButtonStyle, flex: "1" }}
++            disabled={saving()}
++            aria-disabled={saving()}
++            onClick={submit}
++          >
++            {saving() ? "保存中…" : "添加"}
++          </button>
++          <button
++            type="button"
++            style={smallButtonStyle}
++            onClick={() => {
++              reset()
++              setOpen(false)
++            }}
++          >
++            取消
++          </button>
++        </div>
++      </div>
++    </Show>
 +  )
 +}
 +
@@ -650,15 +1004,21 @@ index 000000000..81223c712
 +  const [keys, setKeys] = createSignal<ResolvedKey[]>([])
 +  // 逐 key 的 profile 状态，按 key id 索引；整份替换以触发响应式更新。
 +  const [profiles, setProfiles] = createSignal<Record<string, KeyProfileState>>({})
-+
-+  // [cx] US-007: 充值页面 URL 在组件创建时解析一次（注入变量为构建期常量，不会变）。
-+  const topupUrl = resolveTopupUrl()
++  // [cx] US-009: 正在切换激活的 key id（切换期间禁用相关按钮、显示反馈）。
++  const [switchingId, setSwitchingId] = createSignal<string | null>(null)
++  // [cx] US-009: 切换激活后置真 —— 提示需重启内核生效（config 启动期一次性注入，US-002）。
++  const [needsRestart, setNeedsRestart] = createSignal(false)
 +
 +  const activeEntry = () => keys().find((k) => k.isActive) ?? keys()[0]
 +  const activeProfile = (): KeyProfileState | undefined => {
 +    const entry = activeEntry()
 +    return entry ? profiles()[entry.id] : undefined
 +  }
++
++  // [cx] US-010: 充值页面 URL 派生自「当前激活 key」。优先用注入变量 NEWAPI_TOPUP_URL；
++  // 缺省回退到由激活 key 的 baseURL 推导的站点根（随切换激活 key 响应式变化，故用派生函数
++  // 而非组件创建期常量）。都缺失时为空串 → 充值按钮禁用并提示。
++  const topupUrl = () => resolveTopupUrl(activeEntry()?.baseURL)
 +  // 有任一 key 仍在加载即视为刷新中（一键刷新按钮据此禁用 + 改文案）。
 +  const anyLoading = () => keys().some((k) => (profiles()[k.id]?.status ?? "loading") === "loading")
 +
@@ -674,13 +1034,85 @@ index 000000000..81223c712
 +    for (const entry of keys()) void loadProfile(entry)
 +  }
 +
++  // 从本地 store 重新拉列表并刷新 profile（增删改切换后调用以同步 UI）。
++  async function reload(): Promise<void> {
++    const state = await loadChannelState()
++    setKeys(resolveKeyList(state))
++    setInitializing(false)
++    refreshAll()
++  }
++
 +  onMount(() => {
-+    void resolveKeyList().then((list) => {
-+      setKeys(list)
-+      setInitializing(false)
-+      refreshAll()
-+    })
++    void reload()
 +  })
++
++  // [cx] US-009: 新增 key —— 写入本地 store 后重载列表。
++  async function handleAdd(input: { label: string; key: string; baseURL: string }): Promise<void> {
++    try {
++      await window.api.channelKeysAdd(input)
++    } catch {
++      // 主进程写库正常不抛；即便异常也不应让面板崩溃。
++    }
++    await reload()
++  }
++
++  // [cx] US-009: 保存 label。
++  async function handleSaveLabel(id: string, label: string): Promise<void> {
++    try {
++      await window.api.channelKeysUpdateLabel(id, label)
++    } catch {
++      // 忽略：不让面板崩溃。
++    }
++    await reload()
++  }
++
++  // [cx] US-009: 删除 key（二次确认在卡片内完成）。删激活项时主进程侧激活回退首项/置空。
++  async function handleRemove(id: string): Promise<void> {
++    const wasActive = keys().find((k) => k.id === id)?.isActive ?? false
++    try {
++      await window.api.channelKeysRemove(id)
++    } catch {
++      // 忽略：不让面板崩溃。
++    }
++    await reload()
++    // 删的是激活项 → 激活项已变动 → 内核需重启以对齐（若还有剩余 key）。
++    if (wasActive && keys().length > 0) setNeedsRestart(true)
++  }
++
++  // [cx] US-009: 点击卡片切换激活 key。更新 activeKeyId → 拉该 key 的 /v1/models 落盘
++  //（更新内核可选模型）→ 重载 UI → 提示重启（内核 config 启动期一次性注入，须重启生效）。
++  async function handleActivate(entry: ResolvedKey): Promise<void> {
++    if (entry.builtin || entry.isActive || switchingId()) return
++    setSwitchingId(entry.id)
++    try {
++      await window.api.channelKeysSetActive(entry.id)
++      // 拉该 key 的可用模型并落盘（供内核 config 注入可选模型）。失败返回空数组，不阻断切换。
++      const models = await fetchModelsWith(entry.baseURL, entry.key)
++      if (models.length > 0) {
++        try {
++          await window.api.channelKeysSetModels(entry.id, models)
++        } catch {
++          // 忽略：模型缓存写入失败不阻断切换。
++        }
++      }
++      await reload()
++      setNeedsRestart(true)
++    } catch {
++      // 忽略：切换失败不让面板崩溃。
++    } finally {
++      setSwitchingId(null)
++    }
++  }
++
++  // [cx] US-009: 立即重启内核。复用既有 relaunch（stopSidecars → app.relaunch，US-002 结论：
++  // 这是当前唯一「换 key 生效」路径；会话历史持久化在 DB，仅进行中的流式生成会被打断）。
++  function restartNow(): void {
++    try {
++      window.api.relaunch()
++    } catch {
++      // relaunch 只是发一条 ipc 消息，正常不会抛出。
++    }
++  }
 +
 +  return (
 +    <div style={overlayStyle} onClick={props.onClose} role="presentation">
@@ -698,6 +1130,24 @@ index 000000000..81223c712
 +          </button>
 +        </div>
 +
++        {/* [cx] US-009: 切换/删除激活项后的重启提示。内核 config 启动期一次性注入，须重启生效。 */}
++        <Show when={needsRestart()}>
++          <div style={restartBannerStyle}>
++            <span style={{ flex: "1" }}>已更新激活 key，需重启内核后生效。重启会中断当前进行中的对话，聊天历史不受影响。</span>
++            <button type="button" style={bannerButtonStyle} onClick={restartNow}>
++              立即重启
++            </button>
++            <button
++              type="button"
++              style={{ ...closeButtonStyle, "font-size": "14px" }}
++              aria-label="稍后重启"
++              onClick={() => setNeedsRestart(false)}
++            >
++              ✕
++            </button>
++          </div>
++        </Show>
++
 +        <Switch>
 +          <Match when={initializing()}>
 +            <div style={stateBoxStyle}>正在加载…</div>
@@ -707,8 +1157,9 @@ index 000000000..81223c712
 +            <div style={stateBoxStyle}>
 +              尚未配置渠道凭据
 +              <br />
-+              请在设置中添加 key,或在打包/启动时注入 NEWAPI_BASE_URL 与 NEWAPI_API_KEY
++              请在下方新增 key,或在打包/启动时注入 NEWAPI_BASE_URL 与 NEWAPI_API_KEY
 +            </div>
++            <AddKeyForm onAdd={handleAdd} />
 +          </Match>
 +
 +          <Match when={keys().length > 0}>
@@ -792,9 +1243,26 @@ index 000000000..81223c712
 +              </Switch>
 +            </div>
 +
-+            {/* [cx] US-008: key 卡片列表。每张卡片按各自 key 独立查询 profile。 */}
-+            <div style={sectionTitleStyle}>Key 列表({keys().length})</div>
-+            <For each={keys()}>{(entry) => <KeyCard entry={entry} state={profiles()[entry.id]} />}</For>
++            {/* [cx] US-008/US-009: key 卡片列表。点击非激活卡片切换激活；每张可编辑名称/删除。 */}
++            <div style={sectionTitleStyle}>
++              <span>Key 列表({keys().length})</span>
++              <span style={{ "font-size": "11px" }}>点击卡片切换激活</span>
++            </div>
++            <For each={keys()}>
++              {(entry) => (
++                <KeyCard
++                  entry={entry}
++                  state={profiles()[entry.id]}
++                  switching={switchingId() === entry.id}
++                  onActivate={(e) => void handleActivate(e)}
++                  onSaveLabel={(id, label) => void handleSaveLabel(id, label)}
++                  onRemove={(id) => void handleRemove(id)}
++                />
++              )}
++            </For>
++
++            {/* [cx] US-009: 新增 key 表单。 */}
++            <AddKeyForm onAdd={handleAdd} />
 +          </Match>
 +        </Switch>
 +
@@ -803,14 +1271,14 @@ index 000000000..81223c712
 +        <button
 +          type="button"
 +          style={topupButtonStyle}
-+          disabled={!topupUrl}
-+          aria-disabled={!topupUrl}
-+          onClick={() => openTopup(topupUrl)}
++          disabled={!topupUrl()}
++          aria-disabled={!topupUrl()}
++          onClick={() => openTopup(topupUrl())}
 +        >
 +          充值
 +        </button>
 +
-+        <Show when={!topupUrl}>
++        <Show when={!topupUrl()}>
 +          <div style={hintStyle}>未配置充值地址,请注入 NEWAPI_TOPUP_URL 或 NEWAPI_BASE_URL</div>
 +        </Show>
 +      </div>

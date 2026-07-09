@@ -22,15 +22,25 @@
 #     username/avatar/quota/used_quota/token_remain/token_used/token_used_today/unlimited，
 #     额度按 QUOTA_PER_UNIT 换算显示、unlimited 显示「不限额」，含加载中 / 请求失败 /
 #     未配置凭据 / 就绪四态；契约见 brand/docs/api-app-profile.md。
-#   - US-007 起：「充值」按钮点击经 window.api.openLink（→ 主进程 shell.openExternal）
-#     在系统默认浏览器打开充值页面；URL 走注入变量 NEWAPI_TOPUP_URL，缺省回退到站点根。
-#     客户端内不实现任何支付逻辑。
+#   - US-007/US-010 充值入口：「充值」按钮点击经 window.api.openLink（→ 主进程 shell.openExternal）
+#     在系统默认浏览器打开充值页面；URL 优先走注入变量 NEWAPI_TOPUP_URL，缺省回退到「由当前
+#     激活 key 的 baseURL 推导的站点根」（US-010：派生函数随切换激活 key 响应式变化，activeBaseURL
+#     为空再回退构建期 NEWAPI_BASE_URL）；两者都缺失时按钮禁用并提示。客户端内不实现任何支付逻辑。
 #   - US-008（key 列表卡片 + 顶部账户汇总）：面板不再只看构建期单 key，而是经
 #     window.api.storeGet 读 US-003 本地 key 列表（04 的 channelKeys）。顶部汇总区展示
 #     激活 key 账户的头像/用户名/账户总额度/账户已用（进度条）+「一键刷新」；下方逐 key
 #     卡片，每张按各自 baseURL/key 独立调 /api/app/profile（不同 key 可能不同账户），
 #     展示 label / 打码 key（maskKey）/ 该 key 已消耗 / 今日消耗 / 该账户头像+用户名，
 #     激活卡片有选中态（高亮边框 + 徽章）。本地无 key 时回退构建期注入变量合成单条。
+#   - US-009（增删改 key + 手动切换激活）：面板可管理本地 key 列表——新增 key（粘贴 sk-…，
+#     可选 label/baseURL，经 window.api.channelKeysAdd 写入）；删除 key（卡片内二次确认，经
+#     channelKeysRemove，删激活项时主进程侧激活回退首项/置空）；内联编辑 label（channelKeysUpdateLabel）；
+#     点击非激活卡片切换激活（channelKeysSetActive 更新 activeKeyId，随后带该 key 的 sk- 调
+#     /v1/models 拉可用模型经 channelKeysSetModels 落盘，供内核 config 注入可选模型）。因内核
+#     config 启动期一次性注入（US-002 结论：须重启 sidecar 才生效），切换/删激活后给出重启提示
+#     横幅（立即重启复用 window.api.relaunch，提醒会中断进行中的对话、聊天历史不受影响）。key
+#     明文输入（新增表单用 type=password）只在内存/本地 store 流转，不打印/不写日志，展示一律 maskKey 打码。
+#     key 管理全部走 05-channel-keys-ipc 的专用 IPC（不用通用 storeSet，那会破坏主进程对象读取）。
 [01-balance-panel]
 packages/desktop/src/renderer/balance/balance-panel.tsx
 packages/desktop/src/renderer/index.tsx
@@ -45,7 +55,7 @@ packages/desktop/src/renderer/index.tsx
 packages/desktop/electron.vite.config.ts
 packages/desktop/src/renderer/env.d.ts
 
-# 内置渠道锁定 / 内核默认注入（US-001 / US-003 / US-004 / US-008）：
+# 内置渠道锁定 / 内核默认注入（US-001 / US-003 / US-004 / US-008 / US-009）：
 #   - 构建期把渠道变量（NEWAPI_BASE_URL / NEWAPI_API_KEY / NEWAPI_MODEL）经 electron.vite
 #     main.define 内联进主进程 import.meta.env（主进程运行时读不到 process.env 里的这些值），
 #     作为「内置默认」回退值；server.ts 拼装一份 opencode config，经 OPENCODE_CONFIG_CONTENT
@@ -56,6 +66,10 @@ packages/desktop/src/renderer/env.d.ts
 #     model 无 per-key 字段，始终取构建期内置默认。切换激活 key 后须重启 sidecar 才生效（US-002）。
 #   - 内核 config 合并链里 OPENCODE_CONFIG_CONTENT 排在全局 / 项目配置之后，注入的
 #     newapi provider 与默认 model 覆盖用户同名配置。
+#   - US-009：可选模型注入。buildChannelConfigContent() 的模型集合优先取激活 key 缓存的
+#     models（切换激活 key 时拉该 key 的 /v1/models 落盘，见 04 的 setChannelKeyModels），
+#     无缓存时回退构建期内置 NEWAPI_MODEL 合成单条；列出的每个模型都写进 provider.newapi.models
+#     成为内核「该 key 的可选模型」，默认 model 取 NEWAPI_MODEL（在列表内）否则列表首项。
 #   - main/env.d.ts 补上对应 ImportMetaEnv 类型声明，保证 typecheck 通过。
 #   - 注意：server.ts 引用 04 的 store-channel-keys.ts，故 03 须先于/连同 04 应用（git apply 按
 #     NN 序 03→04，只做文本操作不校验 import，typecheck 在全部补丁应用后才跑）。
@@ -64,14 +78,32 @@ packages/desktop/electron.vite.config.ts
 packages/desktop/src/main/env.d.ts
 packages/desktop/src/main/server.ts
 
-# 本地多 key 列表存储模型（US-003）：
+# 本地多 key 列表存储模型（US-003 / US-009）：
 #   - 纯主进程数据层，复用 opencode 既有 electron-store（store.ts / getStore）。
 #     在默认 settings store（app.getPath("userData")/opencode.settings，JSON 明文）内
-#     以单键 channelKeys 保存 { keys: [{ id, label, key, baseURL }], activeKeyId }。
+#     以单键 channelKeys 保存 { keys: [{ id, label, key, baseURL, models? }], activeKeyId }。
 #   - 提供读写封装：readChannelKeysState / readActiveChannelKey / addChannelKey /
-#     removeChannelKey / updateChannelKeyLabel / setActiveChannelKey。无 key 时读激活项返回
-#     null，不报错。key 明文仅存本地、不上传、不写日志（本模块不记录 key 值）。
+#     removeChannelKey / updateChannelKeyLabel / setActiveChannelKey / setChannelKeyModels。
+#     无 key 时读激活项返回 null，不报错。key 明文仅存本地、不上传、不写日志（本模块不记录 key 值）。
+#   - US-009：ChannelKey 新增可选 models（切换激活 key 时缓存该 key 的 /v1/models 结果），
+#     新增 setChannelKeyModels(id, models) 落盘；读取时对 models 规整（只留字符串、去重）。
 #   - store-keys.ts 追加 CHANNEL_KEYS_KEY 常量。后续 US（token 来源改造 / key 管理 UI）复用本层。
 [04-channel-keys-store]
 packages/desktop/src/main/store-channel-keys.ts
 packages/desktop/src/main/store-keys.ts
+
+# 本地 key 管理 IPC 通道（US-009）：
+#   - renderer 增删改 key / 切换激活需落到主进程数据层（04 的 store-channel-keys），但不能用
+#     通用 store-set（那会把整个对象存成字符串、破坏主进程 readChannelKeysState 的对象读取），
+#     故为 key 管理开一组专用 IPC：channel-keys-list / -add / -remove / -update-label /
+#     -set-active / -set-models（ipc.ts 注册 handler，直接调 04 的数据层函数）。
+#   - preload/index.ts 经 contextBridge 暴露 window.api.channelKeys*（返回最新状态的 JSON 字符串，
+#     renderer 解析回对象刷新 UI）；preload/types.ts 补对应 ElectronAPI 类型声明。
+#   - 切换激活 key 后重启内核复用既有 window.api.relaunch（stopSidecars → app.relaunch，US-002
+#     结论：config 启动期一次性注入，换 key 必须重启才生效），本补丁不新增重启 IPC。
+#   - 安全底线：key 管理 handler 一律不打印任何入参（尤其 sk- 明文），仅透传给数据层。
+#   - 依赖：ipc.ts import 04 的 store-channel-keys；独立于 01/02/03 的文件，按 NN 序在其后应用。
+[05-channel-keys-ipc]
+packages/desktop/src/main/ipc.ts
+packages/desktop/src/preload/index.ts
+packages/desktop/src/preload/types.ts
