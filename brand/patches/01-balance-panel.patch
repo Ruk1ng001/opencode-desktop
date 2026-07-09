@@ -1,9 +1,9 @@
 diff --git a/packages/desktop/src/renderer/balance/balance-panel.tsx b/packages/desktop/src/renderer/balance/balance-panel.tsx
 new file mode 100644
-index 000000000..1360c6af1
+index 000000000..3bbdaae6b
 --- /dev/null
 +++ b/packages/desktop/src/renderer/balance/balance-panel.tsx
-@@ -0,0 +1,459 @@
+@@ -0,0 +1,512 @@
 +// [cx] 独立账户面板 —— 对接 new-api 取用户名/头像/额度/用量（US-006）+ 充值入口（US-007）
 +//
 +// 设计约束（见 TODO.md / brand/docs/api-app-profile.md / 验收标准）：
@@ -178,23 +178,48 @@ index 000000000..1360c6af1
 +const Z_LAUNCHER = 9998
 +const Z_OVERLAY = 9999
 +
++// [cx] US-007: 账户入口移至界面左下角（原在右下角 right/bottom）。样式改为与面板一致的
++// 深色半透明胶囊，弱化突兀感、贴合 opencode 原生深色 UI；按钮上展示当前激活 key 账户的
++// 头像/用户名（见下方 launcherAvatar* 样式与 BalanceLauncher）。
 +const launcherStyle: JSX.CSSProperties = {
 +  position: "fixed",
-+  right: "16px",
++  left: "16px",
 +  bottom: "16px",
 +  "z-index": String(Z_LAUNCHER),
 +  display: "inline-flex",
 +  "align-items": "center",
-+  gap: "6px",
-+  padding: "8px 14px",
++  gap: "8px",
++  padding: "6px 14px",
 +  "border-radius": "9999px",
-+  border: "1px solid rgba(255,255,255,0.14)",
-+  background: "#2563eb",
-+  color: "#ffffff",
++  border: "1px solid rgba(255,255,255,0.12)",
++  background: "rgba(22,22,24,0.92)",
++  color: "#e5e5e5",
 +  "font-size": "13px",
 +  "font-weight": "500",
 +  cursor: "pointer",
-+  "box-shadow": "0 2px 8px rgba(0,0,0,0.25)",
++  "box-shadow": "0 2px 8px rgba(0,0,0,0.3)",
++}
++
++// [cx] US-007: 入口按钮上的小头像（比面板内的 avatarStyle 小一号），及无头像时的首字占位。
++const launcherAvatarStyle: JSX.CSSProperties = {
++  width: "24px",
++  height: "24px",
++  "border-radius": "9999px",
++  "object-fit": "cover",
++  border: "1px solid rgba(255,255,255,0.12)",
++}
++
++const launcherAvatarFallbackStyle: JSX.CSSProperties = {
++  width: "24px",
++  height: "24px",
++  "border-radius": "9999px",
++  display: "flex",
++  "align-items": "center",
++  "justify-content": "center",
++  background: "#2563eb",
++  color: "#ffffff",
++  "font-size": "12px",
++  "font-weight": "600",
 +}
 +
 +const overlayStyle: JSX.CSSProperties = {
@@ -451,11 +476,39 @@ index 000000000..1360c6af1
 +// 独立入口 + 面板容器。挂载在聊天界面之外，自管理开合状态，不与聊天 UI 共享任何上下文。
 +export function BalanceLauncher() {
 +  const [open, setOpen] = createSignal(false)
++  // [cx] US-007: 入口按钮上展示当前激活 key 账户的头像/用户名。挂载时拉一次 profile
++  // （fetchProfile 内部已捕获所有错误、永不抛出）；仅在 ready 态用真实身份，其余态
++  // （加载中 / 未配置 / 失败）回退到静态「账户」文字，保证入口永远可点、绝不崩溃。
++  const [identity, setIdentity] = createSignal<{ username: string; avatar: string } | null>(null)
++
++  onMount(() => {
++    void fetchProfile().then((state) => {
++      if (state.status === "ready") {
++        setIdentity({ username: state.username, avatar: state.avatar })
++      }
++    })
++  })
 +
 +  return (
 +    <>
 +      <button type="button" style={launcherStyle} aria-label="打开账户面板" onClick={() => setOpen(true)}>
-+        账户
++        <Show
++          when={identity()}
++          fallback={<span>账户</span>}
++          keyed
++        >
++          {(who) => (
++            <>
++              <Show
++                when={who.avatar}
++                fallback={<div style={launcherAvatarFallbackStyle}>{avatarInitial(who.username)}</div>}
++              >
++                <img src={who.avatar} alt="头像" style={launcherAvatarStyle} />
++              </Show>
++              <span>{who.username || "账户"}</span>
++            </>
++          )}
++        </Show>
 +      </button>
 +      <Show when={open()}>
 +        <BalancePanel onClose={() => setOpen(false)} />

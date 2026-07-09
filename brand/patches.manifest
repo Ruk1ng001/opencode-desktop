@@ -14,6 +14,9 @@
 # 独立账户面板（US-005 骨架 → US-006 接入 new-api 真实 profile → US-007 充值入口）：
 #   - 自包含面板组件（用户名/头像 / 账户额度 / 本 key 用量 / 充值，中文，仅依赖 solid-js）；
 #   - 在渲染入口挂载独立悬浮入口，位于聊天 UI 树之外，不改动任何既有聊天组件；
+#     US-007（入口移至左侧）：入口从右下角改到左下角，样式改为贴合原生的深色胶囊，
+#     并在入口按钮上展示当前激活 key 账户的头像/用户名（挂载时拉一次 profile，仅 ready
+#     态用真实身份，其余态回退静态「账户」文字），点击仍打开完整面板。
 #   - US-006 起：打开面板时带该 key 的 sk- 调 new-api GET /api/app/profile（走 token 鉴权
 #     中间件，替换旧的 /api/user/self——后者用 API Token 鉴权会失败），解析
 #     username/avatar/quota/used_quota/token_remain/token_used/token_used_today/unlimited，
