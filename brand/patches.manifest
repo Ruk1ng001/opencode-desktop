@@ -11,11 +11,14 @@
 # 导出（改动 opencode/ 后，在 opencode/ 内）：
 #   git -C opencode diff -- <文件...> > brand/patches/NN-<name>.patch
 
-# 独立余额面板（US-005 骨架 → US-006 接入 new-api 真实余额/用量 → US-007 充值入口）：
-#   - 自包含面板组件（余额 / 已用量 / 充值，中文，仅依赖 solid-js）；
+# 独立账户面板（US-005 骨架 → US-006 接入 new-api 真实 profile → US-007 充值入口）：
+#   - 自包含面板组件（用户名/头像 / 账户额度 / 本 key 用量 / 充值，中文，仅依赖 solid-js）；
 #   - 在渲染入口挂载独立悬浮入口，位于聊天 UI 树之外，不改动任何既有聊天组件；
-#   - US-006 起：打开面板时向 new-api GET /api/user/self 拉取真实 quota/used_quota，
-#     解析并做单位换算，含加载中 / 请求失败 / 未配置凭据 / 就绪四态。
+#   - US-006 起：打开面板时带该 key 的 sk- 调 new-api GET /api/app/profile（走 token 鉴权
+#     中间件，替换旧的 /api/user/self——后者用 API Token 鉴权会失败），解析
+#     username/avatar/quota/used_quota/token_remain/token_used/token_used_today/unlimited，
+#     额度按 QUOTA_PER_UNIT 换算显示、unlimited 显示「不限额」，含加载中 / 请求失败 /
+#     未配置凭据 / 就绪四态；契约见 brand/docs/api-app-profile.md。
 #   - US-007 起：「充值」按钮点击经 window.api.openLink（→ 主进程 shell.openExternal）
 #     在系统默认浏览器打开充值页面；URL 走注入变量 NEWAPI_TOPUP_URL，缺省回退到站点根。
 #     客户端内不实现任何支付逻辑。

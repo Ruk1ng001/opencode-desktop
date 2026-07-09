@@ -1,17 +1,21 @@
 diff --git a/packages/desktop/src/renderer/balance/balance-panel.tsx b/packages/desktop/src/renderer/balance/balance-panel.tsx
 new file mode 100644
-index 000000000..6ca721c8f
+index 000000000..1360c6af1
 --- /dev/null
 +++ b/packages/desktop/src/renderer/balance/balance-panel.tsx
-@@ -0,0 +1,352 @@
-+// [cx] 独立余额面板 —— 对接 new-api 取余额/用量（US-006）+ 充值入口（US-007）
+@@ -0,0 +1,459 @@
++// [cx] 独立账户面板 —— 对接 new-api 取用户名/头像/额度/用量（US-006）+ 充值入口（US-007）
 +//
-+// 设计约束（见 TODO.md / 验收标准）：
++// 设计约束（见 TODO.md / brand/docs/api-app-profile.md / 验收标准）：
 +//   - 独立展示区域，与 opencode 原有聊天 UI 组件完全解耦；本文件不 import 任何
 +//     上游 app / session-ui 组件，仅依赖 solid-js，可离线 typecheck。
 +//   - 明确入口：一个独立悬浮按钮「账户」，点击打开全屏浮层面板。
-+//   - 打开面板时向 new-api 用户接口（默认 GET /api/user/self）拉取真实余额/用量，
-+//     解析 quota / used_quota 做单位换算与中文标注。
++//   - 打开面板时向 new-api 只读 profile 接口（GET /api/app/profile）拉取真实
++//     用户名/头像/额度/用量，解析后做单位换算与中文标注。
++//   - [cx] US-006: 端点从旧的 /api/user/self 改为 /api/app/profile。旧端点走
++//     用户会话/系统令牌鉴权，用 sk- API Token 调会失败（TODO 第七节风险 #3）；
++//     新端点走 token 鉴权中间件（同 /v1/*），由 sk- 定位 token → 本人 profile
++//     （见 brand/docs/api-app-profile.md）。
 +//   - baseURL 与鉴权凭据复用 US-003 注入的同名变量（NEWAPI_BASE_URL / NEWAPI_API_KEY），
 +//     经 electron.vite renderer.define 注入到 import.meta.env，本文件不硬编码任何地址/密钥。
 +//   - 四种数据状态各有明确提示：加载中 / 请求失败 / 未配置凭据 / 就绪。
@@ -25,8 +29,10 @@ index 000000000..6ca721c8f
 +import { createSignal, onMount, Show, Switch, Match } from "solid-js"
 +import type { JSX } from "solid-js"
 +
-+// new-api 用户接口路径（站点根下，非 /v1 渠道端点）。
-+const USER_SELF_PATH = "/api/user/self"
++// [cx] US-006: new-api 只读 profile 接口路径（站点根下，非 /v1 渠道端点）。
++// 走 token 鉴权中间件，由 Bearer sk- 定位 token → 返回本人 profile。
++// 见 brand/docs/api-app-profile.md。替换旧的 /api/user/self（sk- 鉴权失败）。
++const APP_PROFILE_PATH = "/api/app/profile"
 +
 +// new-api 默认 QuotaPerUnit：500000 额度 = 1 美元（common.QuotaPerUnit 默认值）。
 +// 若目标站点改了该值，展示的货币金额会有偏差——额度原值同时展示以便对照。
@@ -72,24 +78,60 @@ index 000000000..6ca721c8f
 +  return quotaUnits.toLocaleString("zh-CN")
 +}
 +
++// [cx] US-006: 无头像时的占位首字（取用户名首个字符，空则用「?」）。
++function avatarInitial(username: string): string {
++  const trimmed = username.trim()
++  return trimmed ? trimmed[0].toUpperCase() : "?"
++}
++
++// [cx] US-006: profile 就绪态承载 8 个字段（用户名/头像/账户额度/key 用量/是否不限额）。
++// 额度类字段均为 new-api 原始 quota 整数，换算/显示在渲染层做。
++type ProfileData = {
++  username: string
++  avatar: string
++  quota: number
++  usedQuota: number
++  tokenRemain: number
++  tokenUsed: number
++  tokenUsedToday: number
++  unlimited: boolean
++}
++
 +type BalanceState =
 +  | { status: "unconfigured" }
 +  | { status: "loading" }
 +  | { status: "error"; message: string }
-+  | { status: "ready"; quota: number; usedQuota: number }
++  | ({ status: "ready" } & ProfileData)
 +
-+// new-api 标准响应信封。字段全部可选，做防御性解析。
-+type UserSelfResponse = {
++// [cx] US-006: /api/app/profile 响应信封（见 brand/docs/api-app-profile.md 第 3 节）。
++// 字段全部可选，做防御性解析——缺字段回退到 0 / "" / false，不因缺项崩溃。
++// 契约未强约束是否带 success 信封（错误体格式以现网为准），故按 HTTP status 分支，
++// data 缺失时把整个 body 当作扁平 profile 兜底。
++type ProfileResponse = {
 +  success?: boolean
 +  message?: string
++  username?: string
++  avatar?: string
++  quota?: number
++  used_quota?: number
++  token_remain?: number
++  token_used?: number
++  token_used_today?: number
++  unlimited?: boolean
 +  data?: {
++    username?: string
++    avatar?: string
 +    quota?: number
 +    used_quota?: number
++    token_remain?: number
++    token_used?: number
++    token_used_today?: number
++    unlimited?: boolean
 +  }
 +}
 +
-+// 拉取余额/用量。任何异常都被捕获并转成 error 态返回，本函数永不抛出。
-+async function fetchBalance(): Promise<BalanceState> {
++// 拉取 profile。任何异常都被捕获并转成 error 态返回，本函数永不抛出。
++async function fetchProfile(): Promise<BalanceState> {
 +  // 复用 US-003 注入的同名变量（构建期由 renderer.define 从 process.env 注入）。
 +  const baseURL = import.meta.env.NEWAPI_BASE_URL ?? ""
 +  const apiKey = import.meta.env.NEWAPI_API_KEY ?? ""
@@ -97,27 +139,33 @@ index 000000000..6ca721c8f
 +  if (!baseURL || !apiKey) return { status: "unconfigured" }
 +
 +  try {
-+    const url = deriveApiBase(baseURL) + USER_SELF_PATH
++    // [cx] US-006: 带该 key 的 sk- 调 /api/app/profile，走 token 鉴权中间件。
++    const url = deriveApiBase(baseURL) + APP_PROFILE_PATH
 +    const res = await fetch(url, {
 +      headers: {
-+        // 鉴权方式「待确认」：new-api UserAuth 接受登录 session 或 Authorization 头
-+        // 承载的 access token（并要求 New-Api-User 头匹配用户 id）。此处以渠道凭据
-+        // 按标准 Bearer 尝试；若站点要求 session / New-Api-User 头，请求会失败并落入
-+        // error 态给出提示——不会崩溃或阻塞主程序。
 +        Authorization: `Bearer ${apiKey}`,
 +        Accept: "application/json",
 +      },
 +    })
 +    if (!res.ok) return { status: "error", message: `请求返回 HTTP ${res.status}` }
 +
-+    const body = (await res.json()) as UserSelfResponse
-+    if (!body.success || !body.data) {
++    const body = (await res.json()) as ProfileResponse
++    // 契约可能带 success 信封；显式 success === false 视为失败。
++    if (body.success === false) {
 +      return { status: "error", message: body.message || "接口返回失败" }
 +    }
++    // profile 字段可能在 data 信封内或扁平在 body 顶层，两者都兼容。
++    const p = body.data ?? body
 +    return {
 +      status: "ready",
-+      quota: body.data.quota ?? 0,
-+      usedQuota: body.data.used_quota ?? 0,
++      username: p.username ?? "",
++      avatar: p.avatar ?? "",
++      quota: p.quota ?? 0,
++      usedQuota: p.used_quota ?? 0,
++      tokenRemain: p.token_remain ?? 0,
++      tokenUsed: p.token_used ?? 0,
++      tokenUsedToday: p.token_used_today ?? 0,
++      unlimited: p.unlimited ?? false,
 +    }
 +  } catch (error) {
 +    return {
@@ -243,6 +291,41 @@ index 000000000..6ca721c8f
 +  "text-align": "center",
 +}
 +
++// [cx] US-006: 用户信息头（头像 + 用户名）样式。
++const identityStyle: JSX.CSSProperties = {
++  display: "flex",
++  "align-items": "center",
++  gap: "12px",
++  "margin-bottom": "16px",
++}
++
++const avatarStyle: JSX.CSSProperties = {
++  width: "44px",
++  height: "44px",
++  "border-radius": "9999px",
++  "object-fit": "cover",
++  border: "1px solid rgba(255,255,255,0.12)",
++}
++
++const avatarFallbackStyle: JSX.CSSProperties = {
++  width: "44px",
++  height: "44px",
++  "border-radius": "9999px",
++  display: "flex",
++  "align-items": "center",
++  "justify-content": "center",
++  background: "#2563eb",
++  color: "#ffffff",
++  "font-size": "20px",
++  "font-weight": "600",
++}
++
++const usernameStyle: JSX.CSSProperties = {
++  "font-size": "16px",
++  "font-weight": "600",
++  color: "#f5f5f5",
++}
++
 +function BalanceCard(props: { label: string; value: string; sub: string }) {
 +  return (
 +    <div style={cardStyle}>
@@ -259,9 +342,9 @@ index 000000000..6ca721c8f
 +  // [cx] US-007: 充值页面 URL 在组件创建时解析一次（注入变量为构建期常量，不会变）。
 +  const topupUrl = resolveTopupUrl()
 +
-+  // 打开面板即拉取一次。fetchBalance 内部已捕获所有错误，这里不会抛出。
++  // 打开面板即拉取一次。fetchProfile 内部已捕获所有错误，这里不会抛出。
 +  onMount(() => {
-+    void fetchBalance().then(setState)
++    void fetchProfile().then(setState)
 +  })
 +
 +  return (
@@ -306,15 +389,39 @@ index 000000000..6ca721c8f
 +          <Match when={state() as Extract<BalanceState, { status: "ready" }>} keyed>
 +            {(ready) => (
 +              <>
++                {/* [cx] US-006: 用户信息头（用户名 + 头像）。头像缺失时用用户名首字占位。 */}
++                <div style={identityStyle}>
++                  <Show
++                    when={ready.avatar}
++                    fallback={<div style={avatarFallbackStyle}>{avatarInitial(ready.username)}</div>}
++                  >
++                    <img src={ready.avatar} alt="头像" style={avatarStyle} />
++                  </Show>
++                  <span style={usernameStyle}>{ready.username || "未命名用户"}</span>
++                </div>
++
++                {/* [cx] US-006: 账户级额度（user.quota + used_quota）。 */}
 +                <BalanceCard
-+                  label="余额"
++                  label="账户余额"
 +                  value={formatCurrency(ready.quota)}
 +                  sub={`${formatUnits(ready.quota)} 额度`}
 +                />
 +                <BalanceCard
-+                  label="已用量"
++                  label="账户已用"
 +                  value={formatCurrency(ready.usedQuota)}
 +                  sub={`${formatUnits(ready.usedQuota)} 额度`}
++                />
++
++                {/* [cx] US-006: 当前 key 用量。unlimited 时剩余额度显示「不限额」而非金额。 */}
++                <BalanceCard
++                  label="本 key 剩余"
++                  value={ready.unlimited ? "不限额" : formatCurrency(ready.tokenRemain)}
++                  sub={ready.unlimited ? "该 key 不限额度" : `${formatUnits(ready.tokenRemain)} 额度`}
++                />
++                <BalanceCard
++                  label="本 key 已用"
++                  value={formatCurrency(ready.tokenUsed)}
++                  sub={`今日消耗 ${formatCurrency(ready.tokenUsedToday)}`}
 +                />
 +              </>
 +            )}
