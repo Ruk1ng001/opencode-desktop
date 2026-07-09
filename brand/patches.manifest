@@ -25,6 +25,12 @@
 #   - US-007 起：「充值」按钮点击经 window.api.openLink（→ 主进程 shell.openExternal）
 #     在系统默认浏览器打开充值页面；URL 走注入变量 NEWAPI_TOPUP_URL，缺省回退到站点根。
 #     客户端内不实现任何支付逻辑。
+#   - US-008（key 列表卡片 + 顶部账户汇总）：面板不再只看构建期单 key，而是经
+#     window.api.storeGet 读 US-003 本地 key 列表（04 的 channelKeys）。顶部汇总区展示
+#     激活 key 账户的头像/用户名/账户总额度/账户已用（进度条）+「一键刷新」；下方逐 key
+#     卡片，每张按各自 baseURL/key 独立调 /api/app/profile（不同 key 可能不同账户），
+#     展示 label / 打码 key（maskKey）/ 该 key 已消耗 / 今日消耗 / 该账户头像+用户名，
+#     激活卡片有选中态（高亮边框 + 徽章）。本地无 key 时回退构建期注入变量合成单条。
 [01-balance-panel]
 packages/desktop/src/renderer/balance/balance-panel.tsx
 packages/desktop/src/renderer/index.tsx

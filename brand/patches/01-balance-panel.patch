@@ -1,10 +1,11 @@
 diff --git a/packages/desktop/src/renderer/balance/balance-panel.tsx b/packages/desktop/src/renderer/balance/balance-panel.tsx
 new file mode 100644
-index 000000000..3bbdaae6b
+index 000000000..81223c712
 --- /dev/null
 +++ b/packages/desktop/src/renderer/balance/balance-panel.tsx
-@@ -0,0 +1,512 @@
+@@ -0,0 +1,857 @@
 +// [cx] 独立账户面板 —— 对接 new-api 取用户名/头像/额度/用量（US-006）+ 充值入口（US-007）
++//     + key 列表卡片 UI + 顶部账户汇总（US-008）
 +//
 +// 设计约束（见 TODO.md / brand/docs/api-app-profile.md / 验收标准）：
 +//   - 独立展示区域，与 opencode 原有聊天 UI 组件完全解耦；本文件不 import 任何
@@ -16,17 +17,24 @@ index 000000000..3bbdaae6b
 +//     用户会话/系统令牌鉴权，用 sk- API Token 调会失败（TODO 第七节风险 #3）；
 +//     新端点走 token 鉴权中间件（同 /v1/*），由 sk- 定位 token → 本人 profile
 +//     （见 brand/docs/api-app-profile.md）。
-+//   - baseURL 与鉴权凭据复用 US-003 注入的同名变量（NEWAPI_BASE_URL / NEWAPI_API_KEY），
-+//     经 electron.vite renderer.define 注入到 import.meta.env，本文件不硬编码任何地址/密钥。
-+//   - 四种数据状态各有明确提示：加载中 / 请求失败 / 未配置凭据 / 就绪。
++//   - [cx] US-008: 面板不再只看构建期注入的单 key，而是读 US-003 本地 key 列表
++//     （主进程 store-channel-keys 写入的 `channelKeys`），renderer 经 window.api.storeGet
++//     同步读到。顶部汇总区展示「当前激活 key」账户的头像/用户名/账户总额度/账户已用
++//     （进度条）+ 一键刷新；下方逐 key 卡片，每张卡片按各自 key 独立调 /api/app/profile
++//     （不同 key 可能是不同账户），激活 key 卡片有明显选中态。本地无 key 列表时回退到
++//     构建期注入的内置渠道（NEWAPI_BASE_URL / NEWAPI_API_KEY）合成单条，保持面板可用。
++//   - baseURL 与鉴权凭据：优先取本地 key 条目（每张卡片各自的 baseURL/key），
++//     回退构建期注入的同名变量（NEWAPI_BASE_URL / NEWAPI_API_KEY），本文件不硬编码任何地址/密钥。
++//   - 各数据状态各有明确提示：加载中 / 请求失败 / 未配置凭据 / 就绪。
 +//   - 全部网络请求包在 try/catch 内，任何错误都落入 error 态，绝不抛出，
 +//     不阻塞主程序，也不让面板崩溃。
 +//   - 全部中文文案。样式用内联对象，不依赖上游 tailwind / 主题变量。
 +//   - US-007 充值入口：面板含「充值」按钮，点击后经 window.api.openLink（→ 主进程
 +//     shell.openExternal）在系统默认浏览器打开 new-api 充值页面。充值 URL 走注入变量
 +//     NEWAPI_TOPUP_URL，缺省回退到 new-api 站点根。客户端内不实现任何支付逻辑。
++//   - 安全底线：key 明文仅本地持有，展示层一律打码（maskKey），绝不整段渲染或写日志。
 +
-+import { createSignal, onMount, Show, Switch, Match } from "solid-js"
++import { createSignal, onMount, For, Show, Switch, Match } from "solid-js"
 +import type { JSX } from "solid-js"
 +
 +// [cx] US-006: new-api 只读 profile 接口路径（站点根下，非 /v1 渠道端点）。
@@ -37,6 +45,13 @@ index 000000000..3bbdaae6b
 +// new-api 默认 QuotaPerUnit：500000 额度 = 1 美元（common.QuotaPerUnit 默认值）。
 +// 若目标站点改了该值，展示的货币金额会有偏差——额度原值同时展示以便对照。
 +const QUOTA_PER_UNIT = 500000
++
++// [cx] US-008: 本地 key 列表存储位置。与主进程 store-channel-keys.ts / store-keys.ts
++// 保持一致的字面量（renderer 不 import 主进程模块，故内联；同 i18n 里直接用
++// "opencode.global.dat" 的模式）。主进程以对象形式 set 到该键，store-get IPC 返回其
++// JSON.stringify 字符串，本文件解析回对象。
++const SETTINGS_STORE_NAME = "opencode.settings"
++const CHANNEL_KEYS_STORE_KEY = "channelKeys"
 +
 +// 从渠道 baseURL（US-003 的 NEWAPI_BASE_URL，如 https://host/v1）推导 new-api 站点根，
 +// 用户接口挂在站点根 /api 下而非 /v1 渠道端点下。
@@ -84,6 +99,15 @@ index 000000000..3bbdaae6b
 +  return trimmed ? trimmed[0].toUpperCase() : "?"
 +}
 +
++// [cx] US-008: key 打码展示（`sk-…abcd`）。仅保留可辨识的前缀与末 4 位，
++// 绝不整段渲染 key 明文。空串返回空。
++function maskKey(key: string): string {
++  const k = key.trim()
++  if (!k) return ""
++  if (k.length <= 7) return "…" + k.slice(-Math.min(4, k.length))
++  return `${k.slice(0, 3)}…${k.slice(-4)}`
++}
++
 +// [cx] US-006: profile 就绪态承载 8 个字段（用户名/头像/账户额度/key 用量/是否不限额）。
 +// 额度类字段均为 new-api 原始 quota 整数，换算/显示在渲染层做。
 +type ProfileData = {
@@ -96,12 +120,6 @@ index 000000000..3bbdaae6b
 +  tokenUsedToday: number
 +  unlimited: boolean
 +}
-+
-+type BalanceState =
-+  | { status: "unconfigured" }
-+  | { status: "loading" }
-+  | { status: "error"; message: string }
-+  | ({ status: "ready" } & ProfileData)
 +
 +// [cx] US-006: /api/app/profile 响应信封（见 brand/docs/api-app-profile.md 第 3 节）。
 +// 字段全部可选，做防御性解析——缺字段回退到 0 / "" / false，不因缺项崩溃。
@@ -130,16 +148,92 @@ index 000000000..3bbdaae6b
 +  }
 +}
 +
-+// 拉取 profile。任何异常都被捕获并转成 error 态返回，本函数永不抛出。
-+async function fetchProfile(): Promise<BalanceState> {
-+  // 复用 US-003 注入的同名变量（构建期由 renderer.define 从 process.env 注入）。
++// [cx] US-008: 单 key 的 profile 拉取结果。unconfigured 由 key 解析阶段处理（无凭据的
++// key 不会进列表），故此处只有 loading / error / ready 三态。
++type KeyProfileState =
++  | { status: "loading" }
++  | { status: "error"; message: string }
++  | ({ status: "ready" } & ProfileData)
++
++// [cx] US-008: 已解析的可用 key 条目（本地 store 或构建期回退）。key 为明文，仅本地持有，
++// 展示前必经 maskKey 打码。
++type ResolvedKey = {
++  id: string
++  label: string
++  key: string
++  baseURL: string
++  isActive: boolean
++}
++
++// 本地 store 里的原始条目（与主进程 store-channel-keys.ts 的 ChannelKey 对齐）。
++type StoredChannelKey = {
++  id: string
++  label: string
++  key: string
++  baseURL: string
++}
++
++function isStoredChannelKey(value: unknown): value is StoredChannelKey {
++  if (!value || typeof value !== "object") return false
++  const r = value as Record<string, unknown>
++  return (
++    typeof r.id === "string" &&
++    typeof r.label === "string" &&
++    typeof r.key === "string" &&
++    typeof r.baseURL === "string"
++  )
++}
++
++// [cx] US-008: 读本地 key 列表（US-003 主进程写入的 `channelKeys`）。经 store-get IPC 拿到
++// JSON 字符串再解析；任何异常/脏数据都吞掉返回 null，绝不抛出。
++async function readChannelKeysFromStore(): Promise<{ keys: StoredChannelKey[]; activeKeyId: string | null } | null> {
++  try {
++    const raw = await window.api.storeGet(SETTINGS_STORE_NAME, CHANNEL_KEYS_STORE_KEY)
++    if (!raw) return null
++    const parsed = JSON.parse(raw) as { keys?: unknown; activeKeyId?: unknown }
++    if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.keys)) return null
++    const keys = parsed.keys.filter(isStoredChannelKey)
++    const activeKeyId =
++      typeof parsed.activeKeyId === "string" && keys.some((k) => k.id === parsed.activeKeyId)
++        ? parsed.activeKeyId
++        : null
++    return { keys, activeKeyId }
++  } catch {
++    return null
++  }
++}
++
++// [cx] US-008: 解析出面板要展示的 key 列表。优先本地 store（多渠道），其中有凭据的条目
++// 才进列表；本地无 key 时回退到构建期注入的内置渠道合成单条，保证面板仍可用。
++async function resolveKeyList(): Promise<ResolvedKey[]> {
++  const stored = await readChannelKeysFromStore()
++  if (stored && stored.keys.length > 0) {
++    const usable = stored.keys.filter((k) => k.baseURL && k.key)
++    if (usable.length > 0) {
++      return usable.map((k) => ({
++        id: k.id,
++        label: k.label || "未命名 key",
++        key: k.key,
++        baseURL: k.baseURL,
++        isActive: k.id === stored.activeKeyId,
++      }))
++    }
++  }
++  // 回退：本地无可用 key 列表时，用构建期注入的内置渠道合成单条（激活）。
 +  const baseURL = import.meta.env.NEWAPI_BASE_URL ?? ""
 +  const apiKey = import.meta.env.NEWAPI_API_KEY ?? ""
++  if (baseURL && apiKey) {
++    return [{ id: "__builtin__", label: "内置渠道", key: apiKey, baseURL, isActive: true }]
++  }
++  return []
++}
 +
-+  if (!baseURL || !apiKey) return { status: "unconfigured" }
-+
++// [cx] US-008: 按指定 key/baseURL 拉取 profile。任何异常都被捕获并转成 error 态返回，
++// 本函数永不抛出。相比旧的 fetchProfile()，凭据由参数传入（逐 key 查询），不再直接读
++// import.meta.env——不同 key 可能是不同账户。
++async function fetchProfileWith(baseURL: string, apiKey: string): Promise<KeyProfileState> {
++  if (!baseURL || !apiKey) return { status: "error", message: "缺少渠道凭据" }
 +  try {
-+    // [cx] US-006: 带该 key 的 sk- 调 /api/app/profile，走 token 鉴权中间件。
 +    const url = deriveApiBase(baseURL) + APP_PROFILE_PATH
 +    const res = await fetch(url, {
 +      headers: {
@@ -173,6 +267,20 @@ index 000000000..3bbdaae6b
 +      message: error instanceof Error ? error.message : "网络请求失败",
 +    }
 +  }
++}
++
++// [cx] US-007/US-008: 入口按钮身份展示用——解析当前激活 key 的凭据（本地激活项优先，
++// 无则回退列表首个，再无则回退构建期注入变量）。返回 null 表示无任何可用凭据。
++async function resolveActiveCreds(): Promise<{ baseURL: string; apiKey: string } | null> {
++  const stored = await readChannelKeysFromStore()
++  if (stored && stored.keys.length > 0) {
++    const active = stored.keys.find((k) => k.id === stored.activeKeyId) ?? stored.keys[0]
++    if (active && active.baseURL && active.key) return { baseURL: active.baseURL, apiKey: active.key }
++  }
++  const baseURL = import.meta.env.NEWAPI_BASE_URL ?? ""
++  const apiKey = import.meta.env.NEWAPI_API_KEY ?? ""
++  if (baseURL && apiKey) return { baseURL, apiKey }
++  return null
 +}
 +
 +const Z_LAUNCHER = 9998
@@ -233,7 +341,7 @@ index 000000000..3bbdaae6b
 +}
 +
 +const panelStyle: JSX.CSSProperties = {
-+  width: "min(420px, 90vw)",
++  width: "min(440px, 92vw)",
 +  "max-height": "90vh",
 +  overflow: "auto",
 +  background: "#161618",
@@ -250,32 +358,6 @@ index 000000000..3bbdaae6b
 +  "align-items": "center",
 +  "justify-content": "space-between",
 +  "margin-bottom": "16px",
-+}
-+
-+const cardStyle: JSX.CSSProperties = {
-+  background: "rgba(255,255,255,0.04)",
-+  border: "1px solid rgba(255,255,255,0.08)",
-+  "border-radius": "8px",
-+  padding: "14px 16px",
-+  "margin-bottom": "12px",
-+}
-+
-+const cardLabelStyle: JSX.CSSProperties = {
-+  "font-size": "12px",
-+  color: "#9ca3af",
-+  "margin-bottom": "6px",
-+}
-+
-+const cardValueStyle: JSX.CSSProperties = {
-+  "font-size": "22px",
-+  "font-weight": "600",
-+  color: "#f5f5f5",
-+}
-+
-+const cardSubStyle: JSX.CSSProperties = {
-+  "font-size": "12px",
-+  color: "#9ca3af",
-+  "margin-top": "4px",
 +}
 +
 +const stateBoxStyle: JSX.CSSProperties = {
@@ -316,12 +398,20 @@ index 000000000..3bbdaae6b
 +  "text-align": "center",
 +}
 +
-+// [cx] US-006: 用户信息头（头像 + 用户名）样式。
-+const identityStyle: JSX.CSSProperties = {
++// [cx] US-008: 顶部账户汇总区（激活 key 账户）。
++const summaryStyle: JSX.CSSProperties = {
++  background: "rgba(255,255,255,0.04)",
++  border: "1px solid rgba(255,255,255,0.08)",
++  "border-radius": "10px",
++  padding: "16px",
++  "margin-bottom": "18px",
++}
++
++const summaryHeadStyle: JSX.CSSProperties = {
 +  display: "flex",
 +  "align-items": "center",
 +  gap: "12px",
-+  "margin-bottom": "16px",
++  "margin-bottom": "14px",
 +}
 +
 +const avatarStyle: JSX.CSSProperties = {
@@ -351,25 +441,245 @@ index 000000000..3bbdaae6b
 +  color: "#f5f5f5",
 +}
 +
-+function BalanceCard(props: { label: string; value: string; sub: string }) {
++// [cx] US-008: 一键刷新按钮（顶部汇总右上角）。加载中禁用并改文案，作为反馈。
++const refreshButtonStyle: JSX.CSSProperties = {
++  "margin-left": "auto",
++  padding: "6px 12px",
++  "border-radius": "8px",
++  border: "1px solid rgba(255,255,255,0.14)",
++  background: "rgba(255,255,255,0.06)",
++  color: "#e5e5e5",
++  "font-size": "12px",
++  "font-weight": "500",
++  cursor: "pointer",
++}
++
++const summaryRowStyle: JSX.CSSProperties = {
++  display: "flex",
++  "align-items": "baseline",
++  "justify-content": "space-between",
++  "margin-bottom": "6px",
++}
++
++const summaryLabelStyle: JSX.CSSProperties = {
++  "font-size": "12px",
++  color: "#9ca3af",
++}
++
++const summaryValueStyle: JSX.CSSProperties = {
++  "font-size": "15px",
++  "font-weight": "600",
++  color: "#f5f5f5",
++}
++
++const progressTrackStyle: JSX.CSSProperties = {
++  width: "100%",
++  height: "6px",
++  "border-radius": "9999px",
++  background: "rgba(255,255,255,0.08)",
++  "margin-top": "6px",
++  overflow: "hidden",
++}
++
++// [cx] US-008: key 卡片列表区。
++const sectionTitleStyle: JSX.CSSProperties = {
++  "font-size": "12px",
++  color: "#9ca3af",
++  "margin-bottom": "10px",
++}
++
++const cardStyle: JSX.CSSProperties = {
++  background: "rgba(255,255,255,0.04)",
++  border: "1px solid rgba(255,255,255,0.08)",
++  "border-radius": "8px",
++  padding: "14px 16px",
++  "margin-bottom": "12px",
++}
++
++// [cx] US-008: 激活 key 卡片的选中态（高亮边框 + 淡蓝底）。
++const activeCardStyle: JSX.CSSProperties = {
++  border: "1px solid rgba(59,130,246,0.7)",
++  background: "rgba(59,130,246,0.10)",
++}
++
++const cardHeadStyle: JSX.CSSProperties = {
++  display: "flex",
++  "align-items": "center",
++  gap: "10px",
++  "margin-bottom": "10px",
++}
++
++const miniAvatarStyle: JSX.CSSProperties = {
++  width: "28px",
++  height: "28px",
++  "border-radius": "9999px",
++  "object-fit": "cover",
++  border: "1px solid rgba(255,255,255,0.12)",
++}
++
++const miniAvatarFallbackStyle: JSX.CSSProperties = {
++  width: "28px",
++  height: "28px",
++  "border-radius": "9999px",
++  display: "flex",
++  "align-items": "center",
++  "justify-content": "center",
++  background: "#2563eb",
++  color: "#ffffff",
++  "font-size": "13px",
++  "font-weight": "600",
++}
++
++const cardLabelStyle: JSX.CSSProperties = {
++  "font-size": "14px",
++  "font-weight": "600",
++  color: "#f5f5f5",
++}
++
++const cardKeyStyle: JSX.CSSProperties = {
++  "font-size": "12px",
++  color: "#9ca3af",
++  "font-family": "monospace",
++}
++
++const activeBadgeStyle: JSX.CSSProperties = {
++  "margin-left": "auto",
++  padding: "2px 8px",
++  "border-radius": "9999px",
++  background: "rgba(59,130,246,0.85)",
++  color: "#ffffff",
++  "font-size": "11px",
++  "font-weight": "600",
++}
++
++const cardMetricsStyle: JSX.CSSProperties = {
++  display: "flex",
++  gap: "16px",
++}
++
++const metricLabelStyle: JSX.CSSProperties = {
++  "font-size": "11px",
++  color: "#9ca3af",
++  "margin-bottom": "2px",
++}
++
++const metricValueStyle: JSX.CSSProperties = {
++  "font-size": "15px",
++  "font-weight": "600",
++  color: "#f5f5f5",
++}
++
++const cardStateStyle: JSX.CSSProperties = {
++  "font-size": "12px",
++  color: "#9ca3af",
++}
++
++const cardUserRowStyle: JSX.CSSProperties = {
++  display: "flex",
++  "align-items": "center",
++  gap: "6px",
++  "font-size": "12px",
++  color: "#cbd5e1",
++  "margin-bottom": "8px",
++}
++
++// 账户已用占比（0~100，整数）。总额度为 0 时返回 0，避免除零。
++function usedPercent(usedQuota: number, quota: number): number {
++  if (quota <= 0) return 0
++  return Math.min(100, Math.max(0, Math.round((usedQuota / quota) * 100)))
++}
++
++// [cx] US-008: 单张 key 卡片。按各自 key 独立展示 profile（loading/error/ready）。
++function KeyCard(props: { entry: ResolvedKey; state: KeyProfileState | undefined }) {
++  const state = () => props.state ?? ({ status: "loading" } as KeyProfileState)
 +  return (
-+    <div style={cardStyle}>
-+      <div style={cardLabelStyle}>{props.label}</div>
-+      <div style={cardValueStyle}>{props.value}</div>
-+      <div style={cardSubStyle}>{props.sub}</div>
++    <div style={props.entry.isActive ? { ...cardStyle, ...activeCardStyle } : cardStyle}>
++      <div style={cardHeadStyle}>
++        <div>
++          <div style={cardLabelStyle}>{props.entry.label}</div>
++          <div style={cardKeyStyle}>{maskKey(props.entry.key)}</div>
++        </div>
++        <Show when={props.entry.isActive}>
++          <span style={activeBadgeStyle}>激活</span>
++        </Show>
++      </div>
++
++      <Switch>
++        <Match when={state().status === "loading"}>
++          <div style={cardStateStyle}>加载中…</div>
++        </Match>
++
++        <Match when={state() as Extract<KeyProfileState, { status: "error" }>} keyed>
++          {(err) => <div style={cardStateStyle}>获取失败：{err.message}</div>}
++        </Match>
++
++        <Match when={state() as Extract<KeyProfileState, { status: "ready" }>} keyed>
++          {(ready) => (
++            <>
++              {/* 该 key 所属账户的头像 + 用户名（不同 key 可能是不同账户）。 */}
++              <div style={cardUserRowStyle}>
++                <Show
++                  when={ready.avatar}
++                  fallback={<div style={miniAvatarFallbackStyle}>{avatarInitial(ready.username)}</div>}
++                >
++                  <img src={ready.avatar} alt="头像" style={miniAvatarStyle} />
++                </Show>
++                <span>{ready.username || "未命名用户"}</span>
++              </div>
++
++              <div style={cardMetricsStyle}>
++                <div>
++                  <div style={metricLabelStyle}>该 key 已消耗</div>
++                  <div style={metricValueStyle}>{formatCurrency(ready.tokenUsed)}</div>
++                </div>
++                <div>
++                  <div style={metricLabelStyle}>今日消耗</div>
++                  <div style={metricValueStyle}>{formatCurrency(ready.tokenUsedToday)}</div>
++                </div>
++              </div>
++            </>
++          )}
++        </Match>
++      </Switch>
 +    </div>
 +  )
 +}
 +
 +function BalancePanel(props: { onClose: () => void }) {
-+  const [state, setState] = createSignal<BalanceState>({ status: "loading" })
++  const [initializing, setInitializing] = createSignal(true)
++  const [keys, setKeys] = createSignal<ResolvedKey[]>([])
++  // 逐 key 的 profile 状态，按 key id 索引；整份替换以触发响应式更新。
++  const [profiles, setProfiles] = createSignal<Record<string, KeyProfileState>>({})
 +
 +  // [cx] US-007: 充值页面 URL 在组件创建时解析一次（注入变量为构建期常量，不会变）。
 +  const topupUrl = resolveTopupUrl()
 +
-+  // 打开面板即拉取一次。fetchProfile 内部已捕获所有错误，这里不会抛出。
++  const activeEntry = () => keys().find((k) => k.isActive) ?? keys()[0]
++  const activeProfile = (): KeyProfileState | undefined => {
++    const entry = activeEntry()
++    return entry ? profiles()[entry.id] : undefined
++  }
++  // 有任一 key 仍在加载即视为刷新中（一键刷新按钮据此禁用 + 改文案）。
++  const anyLoading = () => keys().some((k) => (profiles()[k.id]?.status ?? "loading") === "loading")
++
++  // 对单个 key 拉 profile：先置 loading（加载反馈），再写入结果。
++  async function loadProfile(entry: ResolvedKey): Promise<void> {
++    setProfiles((prev) => ({ ...prev, [entry.id]: { status: "loading" } }))
++    const result = await fetchProfileWith(entry.baseURL, entry.key)
++    setProfiles((prev) => ({ ...prev, [entry.id]: result }))
++  }
++
++  // [cx] US-008: 一键刷新——对所有可见 key 重新拉取 profile。
++  function refreshAll(): void {
++    for (const entry of keys()) void loadProfile(entry)
++  }
++
 +  onMount(() => {
-+    void fetchProfile().then(setState)
++    void resolveKeyList().then((list) => {
++      setKeys(list)
++      setInitializing(false)
++      refreshAll()
++    })
 +  })
 +
 +  return (
@@ -389,72 +699,107 @@ index 000000000..3bbdaae6b
 +        </div>
 +
 +        <Switch>
-+          <Match when={state().status === "loading"}>
-+            <div style={stateBoxStyle}>正在获取余额…</div>
++          <Match when={initializing()}>
++            <div style={stateBoxStyle}>正在加载…</div>
 +          </Match>
 +
-+          <Match when={state().status === "unconfigured"}>
++          <Match when={keys().length === 0}>
 +            <div style={stateBoxStyle}>
 +              尚未配置渠道凭据
 +              <br />
-+              请在打包/启动时注入 NEWAPI_BASE_URL 与 NEWAPI_API_KEY
++              请在设置中添加 key,或在打包/启动时注入 NEWAPI_BASE_URL 与 NEWAPI_API_KEY
 +            </div>
 +          </Match>
 +
-+          <Match when={state() as Extract<BalanceState, { status: "error" }>} keyed>
-+            {(errorState) => (
-+              <div style={stateBoxStyle}>
-+                获取失败
-+                <br />
-+                {errorState.message}
-+              </div>
-+            )}
-+          </Match>
-+
-+          <Match when={state() as Extract<BalanceState, { status: "ready" }>} keyed>
-+            {(ready) => (
-+              <>
-+                {/* [cx] US-006: 用户信息头（用户名 + 头像）。头像缺失时用用户名首字占位。 */}
-+                <div style={identityStyle}>
++          <Match when={keys().length > 0}>
++            {/* [cx] US-008: 顶部账户汇总（激活 key 账户）。 */}
++            <div style={summaryStyle}>
++              <div style={summaryHeadStyle}>
++                <Show
++                  when={(() => {
++                    const p = activeProfile()
++                    return p && p.status === "ready" ? p : undefined
++                  })()}
++                  fallback={<div style={avatarFallbackStyle}>?</div>}
++                  keyed
++                >
++                  {(ready) => (
++                    <Show
++                      when={ready.avatar}
++                      fallback={<div style={avatarFallbackStyle}>{avatarInitial(ready.username)}</div>}
++                    >
++                      <img src={ready.avatar} alt="头像" style={avatarStyle} />
++                    </Show>
++                  )}
++                </Show>
++                <span style={usernameStyle}>
 +                  <Show
-+                    when={ready.avatar}
-+                    fallback={<div style={avatarFallbackStyle}>{avatarInitial(ready.username)}</div>}
++                    when={(() => {
++                      const p = activeProfile()
++                      return p && p.status === "ready" ? p.username : ""
++                    })()}
++                    fallback="当前账户"
++                    keyed
 +                  >
-+                    <img src={ready.avatar} alt="头像" style={avatarStyle} />
++                    {(name) => <>{name}</>}
 +                  </Show>
-+                  <span style={usernameStyle}>{ready.username || "未命名用户"}</span>
-+                </div>
++                </span>
++                <button
++                  type="button"
++                  style={refreshButtonStyle}
++                  disabled={anyLoading()}
++                  aria-disabled={anyLoading()}
++                  onClick={refreshAll}
++                >
++                  {anyLoading() ? "刷新中…" : "一键刷新"}
++                </button>
++              </div>
 +
-+                {/* [cx] US-006: 账户级额度（user.quota + used_quota）。 */}
-+                <BalanceCard
-+                  label="账户余额"
-+                  value={formatCurrency(ready.quota)}
-+                  sub={`${formatUnits(ready.quota)} 额度`}
-+                />
-+                <BalanceCard
-+                  label="账户已用"
-+                  value={formatCurrency(ready.usedQuota)}
-+                  sub={`${formatUnits(ready.usedQuota)} 额度`}
-+                />
++              <Switch>
++                <Match when={(activeProfile()?.status ?? "loading") === "loading"}>
++                  <div style={cardStateStyle}>正在获取账户额度…</div>
++                </Match>
 +
-+                {/* [cx] US-006: 当前 key 用量。unlimited 时剩余额度显示「不限额」而非金额。 */}
-+                <BalanceCard
-+                  label="本 key 剩余"
-+                  value={ready.unlimited ? "不限额" : formatCurrency(ready.tokenRemain)}
-+                  sub={ready.unlimited ? "该 key 不限额度" : `${formatUnits(ready.tokenRemain)} 额度`}
-+                />
-+                <BalanceCard
-+                  label="本 key 已用"
-+                  value={formatCurrency(ready.tokenUsed)}
-+                  sub={`今日消耗 ${formatCurrency(ready.tokenUsedToday)}`}
-+                />
-+              </>
-+            )}
++                <Match when={activeProfile() as Extract<KeyProfileState, { status: "error" }>} keyed>
++                  {(err) => <div style={cardStateStyle}>获取失败：{err.message}</div>}
++                </Match>
++
++                <Match when={activeProfile() as Extract<KeyProfileState, { status: "ready" }>} keyed>
++                  {(ready) => (
++                    <>
++                      <div style={summaryRowStyle}>
++                        <span style={summaryLabelStyle}>账户总额度</span>
++                        <span style={summaryValueStyle}>{formatCurrency(ready.quota)}</span>
++                      </div>
++                      <div style={summaryRowStyle}>
++                        <span style={summaryLabelStyle}>账户已用</span>
++                        <span style={summaryValueStyle}>
++                          {formatCurrency(ready.usedQuota)}({usedPercent(ready.usedQuota, ready.quota)}%)
++                        </span>
++                      </div>
++                      <div style={progressTrackStyle}>
++                        <div
++                          style={{
++                            width: `${usedPercent(ready.usedQuota, ready.quota)}%`,
++                            height: "100%",
++                            background: "#3b82f6",
++                          }}
++                        />
++                      </div>
++                    </>
++                  )}
++                </Match>
++              </Switch>
++            </div>
++
++            {/* [cx] US-008: key 卡片列表。每张卡片按各自 key 独立查询 profile。 */}
++            <div style={sectionTitleStyle}>Key 列表({keys().length})</div>
++            <For each={keys()}>{(entry) => <KeyCard entry={entry} state={profiles()[entry.id]} />}</For>
 +          </Match>
 +        </Switch>
 +
 +        {/* [cx] US-007: 充值入口。点击经 window.api.openLink 在系统默认浏览器打开充值页面。
-+            URL 已配置时按钮可点；未配置（注入变量与站点根都缺失）时禁用并提示。 */}
++            URL 已配置时按钮可点;未配置(注入变量与站点根都缺失)时禁用并提示。 */}
 +        <button
 +          type="button"
 +          style={topupButtonStyle}
@@ -466,37 +811,37 @@ index 000000000..3bbdaae6b
 +        </button>
 +
 +        <Show when={!topupUrl}>
-+          <div style={hintStyle}>未配置充值地址，请注入 NEWAPI_TOPUP_URL 或 NEWAPI_BASE_URL</div>
++          <div style={hintStyle}>未配置充值地址,请注入 NEWAPI_TOPUP_URL 或 NEWAPI_BASE_URL</div>
 +        </Show>
 +      </div>
 +    </div>
 +  )
 +}
 +
-+// 独立入口 + 面板容器。挂载在聊天界面之外，自管理开合状态，不与聊天 UI 共享任何上下文。
++// 独立入口 + 面板容器。挂载在聊天界面之外,自管理开合状态,不与聊天 UI 共享任何上下文。
 +export function BalanceLauncher() {
 +  const [open, setOpen] = createSignal(false)
-+  // [cx] US-007: 入口按钮上展示当前激活 key 账户的头像/用户名。挂载时拉一次 profile
-+  // （fetchProfile 内部已捕获所有错误、永不抛出）；仅在 ready 态用真实身份，其余态
-+  // （加载中 / 未配置 / 失败）回退到静态「账户」文字，保证入口永远可点、绝不崩溃。
++  // [cx] US-007/US-008: 入口按钮上展示当前激活 key 账户的头像/用户名。挂载时按激活 key
++  // 凭据拉一次 profile(resolveActiveCreds 优先本地激活项、回退构建期变量;fetchProfileWith
++  // 内部已捕获所有错误、永不抛出);仅在 ready 态用真实身份,其余态(无凭据/加载中/失败)
++  // 回退到静态「账户」文字,保证入口永远可点、绝不崩溃。
 +  const [identity, setIdentity] = createSignal<{ username: string; avatar: string } | null>(null)
 +
 +  onMount(() => {
-+    void fetchProfile().then((state) => {
-+      if (state.status === "ready") {
-+        setIdentity({ username: state.username, avatar: state.avatar })
-+      }
++    void resolveActiveCreds().then((creds) => {
++      if (!creds) return
++      void fetchProfileWith(creds.baseURL, creds.apiKey).then((state) => {
++        if (state.status === "ready") {
++          setIdentity({ username: state.username, avatar: state.avatar })
++        }
++      })
 +    })
 +  })
 +
 +  return (
 +    <>
 +      <button type="button" style={launcherStyle} aria-label="打开账户面板" onClick={() => setOpen(true)}>
-+        <Show
-+          when={identity()}
-+          fallback={<span>账户</span>}
-+          keyed
-+        >
++        <Show when={identity()} fallback={<span>账户</span>} keyed>
 +          {(who) => (
 +            <>
 +              <Show
