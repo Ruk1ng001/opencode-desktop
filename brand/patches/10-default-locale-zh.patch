@@ -1,0 +1,18 @@
+diff --git a/packages/desktop/src/renderer/index.tsx b/packages/desktop/src/renderer/index.tsx
+index 966fb0c0b..005c2fa7f 100644
+--- a/packages/desktop/src/renderer/index.tsx
++++ b/packages/desktop/src/renderer/index.tsx
+@@ -330,7 +330,12 @@ function DesktopRoot(props: { windowState: DesktopWindowState }) {
+     const current = await platform.storage?.("opencode.global.dat").getItem("language")
+     const legacy = current ? undefined : await platform.storage?.().getItem("language.v1")
+     const raw = current ?? legacy
+-    if (!raw) return
++    // [cx] US-001: 本地无语言存储（无 opencode.global.dat 的 language、也无 language.v1
++    // legacy）时，默认中文而非 undefined（undefined 会退回上游英文兜底）。已存储时不覆盖。
++    if (!raw) {
++      await loadLocaleDict("zh")
++      return "zh" satisfies Locale
++    }
+     const locale = raw.match(/"locale"\s*:\s*"([^"]+)"/)?.[1]
+     if (!locale) return
+     const next = normalizeLocale(locale)

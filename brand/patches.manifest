@@ -174,3 +174,15 @@ packages/app/src/pages/layout/sidebar-shell.tsx
 #   注入版本号 + 上传/合并 latest*.yml。
 [08-self-update-prerelease]
 packages/desktop/src/main/updater.ts
+
+# 首启默认中文 locale（US-001）：
+#   - renderer/index.tsx 的 DesktopRoot.loadLocale：本地无语言存储（既无 opencode.global.dat
+#     的 language、也无 language.v1 legacy，raw 为空）时，从上游「return undefined → 退回英文兜底」
+#     改为默认加载中文——await loadLocaleDict("zh") 后返回 "zh"。薄叠加，只在 desktop 入口兜底
+#     默认值，不碰上游 i18n/index.ts 的 detectLocale / normalizeLocale。
+#   - 已存储语言时行为不变：raw 非空仍走原有解析（读取存储值优先），默认值不覆盖用户选择；
+#     用户在设置里切到其他语言后持久化到 opencode.global.dat 的 language，下次启动 raw 非空、
+#     不被中文默认值覆盖。
+#   - 独立于其余补丁的文件（仅改 renderer/index.tsx，与 01/02-08 均不共享此改动点），按 NN 序最后应用。
+[10-default-locale-zh]
+packages/desktop/src/renderer/index.tsx
