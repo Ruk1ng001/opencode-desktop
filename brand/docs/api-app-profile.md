@@ -53,6 +53,7 @@ GET /api/app/profile
   "avatar":           "https://…/a.png",    // 头像 URL；无头像时为空串 ""
   "quota":            5000000,              // 账户总额度（user.quota + user.used_quota，见下）
   "used_quota":       1200000,              // 账户已用（user.used_quota）
+  "used_today":       86000,                // 账户今日消耗（该账户全部 token 当天日志之和；可选，见下）
   "token_remain":     380000,               // 该 key 自己的剩余额度（token.remain_quota）
   "token_used":       120000,               // 该 key 自己的已用（token.used_quota）
   "token_used_today": 4200,                 // 该 key 今日消耗（按 token_id 聚合当天日志）
@@ -68,6 +69,7 @@ GET /api/app/profile
 | `avatar` | string | 头像 URL | 头像字段（如 `user.avatar`）；无则返回 `""`，App 端用占位 |
 | `quota` | number | **账户总额度**（原始 quota 单位，非美元） | `user.quota + user.used_quota`（当前可用 + 已用 = 历史总额）。若产品定义为「当前授予的总额」，则取 `user.quota + user.used_quota` 或按 new-api 语义调整，**以本契约「账户总额度」为准**，后端确认后固化 |
 | `used_quota` | number | **账户已用**（原始 quota 单位） | `user.used_quota` |
+| `used_today` | number | **账户今日消耗**（原始 quota 单位）；**可选字段** | 按 `user_id` 聚合当天该账户全部 token 的日志 quota：`SELECT COALESCE(SUM(quota),0) FROM logs WHERE user_id = ? AND created_at >= <当日 0 点> AND type = <消费类型>`。时区须与 `token_used_today` 一致。**后端未实现时可省略该字段**，App 端会显示「—」而非 0，不影响其他数据 |
 | `token_remain` | number | **该 key 剩余额度**（原始 quota 单位） | `token.remain_quota`（`unlimited` 为真时该值无意义，见下） |
 | `token_used` | number | **该 key 已用**（原始 quota 单位） | `token.used_quota` |
 | `token_used_today` | number | **该 key 今日消耗**（原始 quota 单位） | 按 `token_id` 聚合当天（用户本地/服务器时区取其一，需固定）日志表 quota：`SELECT COALESCE(SUM(quota),0) FROM logs WHERE token_id = ? AND created_at >= <当日 0 点> AND type = <消费类型>` |
@@ -167,3 +169,4 @@ GET /api/app/models
 | 日期 | Story | 变更 |
 |---|---|---|
 | 2026-07-09 | US-005 | 首版契约：定义 `GET /api/app/profile`（含 `token_used_today`）、安全约束、`/v1/models` 按 key 说明及 `/api/app/models` 备用接口 |
+| 2026-07-10 | 面板重设计 | 新增账户级 `used_today`（可选）字段，供左侧账户卡展示「账户今日消耗」；后端未实现时可省略，App 端显示「—」 |
