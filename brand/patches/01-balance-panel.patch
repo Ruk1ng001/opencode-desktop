@@ -1,9 +1,9 @@
 diff --git a/packages/desktop/src/renderer/balance/balance-panel.tsx b/packages/desktop/src/renderer/balance/balance-panel.tsx
 new file mode 100644
-index 000000000..07a0701d3
+index 000000000..f0429a0e8
 --- /dev/null
 +++ b/packages/desktop/src/renderer/balance/balance-panel.tsx
-@@ -0,0 +1,1579 @@
+@@ -0,0 +1,1513 @@
 +// [cx] 独立账户面板 —— 对接 new-api 取用户名/头像/额度/用量（US-006）+ 充值入口（US-007）
 +//     + key 列表卡片 UI + 顶部账户汇总（US-008）+ 增删改 key 与手动切换激活 key（US-009）
 +//     + 首启无 key 引导（US-011）
@@ -27,12 +27,13 @@ index 000000000..07a0701d3
 +//       · 新增 key —— 粘贴 sk-…（可选 label / baseURL），经 channelKeysAdd 写入本地列表；
 +//       · 删除 key —— 二次确认后经 channelKeysRemove 删除（删激活项时主进程侧激活回退首项/置空）；
 +//       · 修改 label —— 内联编辑保存，经 channelKeysUpdateLabel；
-+//       · 点击非激活卡片切换激活 key —— 经 channelKeysSetActive 更新 activeKeyId，随后带该
-+//         key 的 sk- 调 /v1/models 拉取可用模型并经 channelKeysSetModels 落盘（供内核 config
-+//         注入「可选模型」）；因内核 config 是启动期一次性注入（US-002 结论：必须重启 sidecar），
-+//         切换后给出重启提示（横幅 + 立即重启按钮），提醒当前会话将中断，由用户决定何时重启。
-+//     所有 key 的增删改切换都走主进程数据层专用 IPC（window.api.channelKeys*），不用通用
-+//     storeSet（那会把整个对象存成字符串、破坏主进程侧对象读取）。
++//       · 点击非激活卡片切换激活 key —— 每个 key 已被主进程注入成独立 opencode provider，
++//         切换是纯前端行为：channelKeysSetActive 更新激活项 + 派发 cx:select-provider 事件，
++//         由树内桥调 useLocal().model.set 切到该 provider（同原生切 model）——**零重启、零打断**。
++//     增删 key（改变 provider 集合）走热重载：主进程重写 OPENCODE_CONFIG 文件 + POST /global/dispose，
++//     内核重建 instance 即生效（channelConfigRefreshKey / channelConfigReload）——不重启进程；
++//     dispose 会中断进行中的流式回复（同原生加/连 provider），故在会话空闲时增删。
++//     所有 key 的增删改切换都走主进程数据层专用 IPC（window.api.channelKeys* / channelConfig*）。
 +//   - [cx] US-011: 首启无 key 引导。本地 key 列表为空且无内置默认 key（resolveKeyList
 +//     返回空数组）时，面板与入口都显示明确引导：面板空态换成「还没有可用的 key」引导块并
 +//     直接展开新增 key 表单（AddKeyForm startOpen），入口按钮换成「导入 key」引导态——
@@ -720,33 +721,6 @@ index 000000000..07a0701d3
 +  "margin-bottom": "8px",
 +}
 +
-+// [cx] US-009: 切换激活后的重启提示横幅。内核 config 启动期一次性注入，须重启 sidecar 生效。
-+const restartBannerStyle: JSX.CSSProperties = {
-+  display: "flex",
-+  "align-items": "center",
-+  gap: "10px",
-+  background: "rgba(234,179,8,0.12)",
-+  border: "1px solid rgba(234,179,8,0.4)",
-+  color: "#fde68a",
-+  "border-radius": "8px",
-+  padding: "10px 12px",
-+  "margin-bottom": "16px",
-+  "font-size": "12px",
-+  "line-height": "1.5",
-+}
-+
-+const bannerButtonStyle: JSX.CSSProperties = {
-+  padding: "5px 10px",
-+  "border-radius": "6px",
-+  border: "1px solid rgba(234,179,8,0.6)",
-+  background: "rgba(234,179,8,0.85)",
-+  color: "#111827",
-+  "font-size": "12px",
-+  "font-weight": "600",
-+  cursor: "pointer",
-+  "white-space": "nowrap",
-+}
-+
 +// [cx] US-013: 深链导入确认弹窗样式。复用面板的 overlay + panel 视觉，展示待导入的
 +// label / 打码 key / baseURL，由用户确认后才写入（避免恶意深链静默写入）。
 +const importRowStyle: JSX.CSSProperties = {
@@ -1055,9 +1029,6 @@ index 000000000..07a0701d3
 +  const [profiles, setProfiles] = createSignal<Record<string, KeyProfileState>>({})
 +  // [cx] US-009: 正在切换激活的 key id（切换期间禁用相关按钮、显示反馈）。
 +  const [switchingId, setSwitchingId] = createSignal<string | null>(null)
-+  // [cx] 新增/删除 key 后置真 —— 提示需重启内核（新 key = 新 provider，须重启 sidecar 注册；
-+  // 切换已注册 key 走 cx:select-provider 桥、零重启，不置此标志）。
-+  const [needsRestart, setNeedsRestart] = createSignal(false)
 +
 +  const activeEntry = () => keys().find((k) => k.isActive) ?? keys()[0]
 +  const activeProfile = (): KeyProfileState | undefined => {
@@ -1096,35 +1067,32 @@ index 000000000..07a0701d3
 +    void reload()
 +  })
 +
-+  // [cx] US-009: 新增 key —— 写入本地 store 后重载列表。
-+  // [cx] 新增 key：写入本地列表 → 拉该 key 的 /v1/models 落盘 → 提示重启。
-+  //   为什么必须拉 models：主进程 buildChannelConfigContent 对「无可用模型的 key」会跳过、
-+  //   不生成 provider（内核里就不会出现这个 key）。故新增时立即拉 /v1/models 缓存，重启后
-+  //   该 key 才会被注入成 provider。baseURL 缺省回退构建期内置默认（NEWAPI_BASE_URL，带 /v1）。
-+  //   为什么提示重启：新 key = 新 provider，内核只在启动时读 config，须重启 sidecar 才注册
-+  //   （已注册 key 之间切换才是零重启）。
++  // [cx] 新增 key —— 写入本地列表 → 主进程拉模型 + 热重载（provider 出现），不重启进程。
++  //   写库后调 channelConfigRefreshKey(新id)：主进程拉该 key 的 /v1/models（无 CORS，比 renderer
++  //   fetch 更稳）落盘 → 重写 OPENCODE_CONFIG 文件 → POST /global/dispose 让内核重建 instance，
++  //   该 key 即成为可用 provider。全程不重启 sidecar。dispose 会中断进行中的流式回复（同原生
++  //   加 provider），故用户应在会话空闲时加 key。
 +  async function handleAdd(input: { label: string; key: string; baseURL: string }): Promise<void> {
++    let addedId: string | undefined
 +    try {
 +      // channelKeysAdd 返回最新 ChannelKeysState 的 JSON，解析出新条目 id（按明文 key 反向匹配）。
 +      const raw = await window.api.channelKeysAdd(input)
 +      const state = JSON.parse(raw) as { keys?: StoredChannelKey[] }
 +      const keys = Array.isArray(state.keys) ? state.keys : []
-+      const added = [...keys].reverse().find((k) => k.key === input.key)
-+      // 拉该 key 的可用模型并落盘（供 provider 注入可选模型）。baseURL 缺省回退构建期内置默认。
-+      const baseURL = input.baseURL || (import.meta.env.NEWAPI_BASE_URL ?? "")
-+      const models = await fetchModelsWith(baseURL, input.key)
-+      if (added?.id && models.length > 0) {
-+        try {
-+          await window.api.channelKeysSetModels(added.id, models)
-+        } catch {
-+          // 模型缓存写入失败不阻断新增。
-+        }
-+      }
++      addedId = [...keys].reverse().find((k) => k.key === input.key)?.id
 +    } catch {
 +      // 主进程写库正常不抛；即便异常也不应让面板崩溃。
 +    }
 +    await reload()
-+    setNeedsRestart(true)
++    // 主进程拉模型 + 热重载（provider 出现）。失败不崩溃。
++    if (addedId) {
++      try {
++        await window.api.channelConfigRefreshKey(addedId)
++      } catch {
++        // 热重载失败不阻断；下次启动时文件配置仍会生效。
++      }
++      await reload()
++    }
 +  }
 +
 +  // [cx] US-009: 保存 label。
@@ -1137,17 +1105,21 @@ index 000000000..07a0701d3
 +    await reload()
 +  }
 +
-+  // [cx] US-009: 删除 key（二次确认在卡片内完成）。删激活项时主进程侧激活回退首项/置空。
++  // [cx] 删除 key（二次确认在卡片内完成）。删激活项时主进程侧激活回退首项/置空。
++  //   删除改变了 provider 集合，调 channelConfigReload：主进程重写 OPENCODE_CONFIG 文件（整份
++  //   覆盖，被删 key 天然消失）+ POST /global/dispose，内核重建后该 provider 消失——不重启进程。
 +  async function handleRemove(id: string): Promise<void> {
-+    const wasActive = keys().find((k) => k.id === id)?.isActive ?? false
 +    try {
 +      await window.api.channelKeysRemove(id)
 +    } catch {
 +      // 忽略：不让面板崩溃。
 +    }
 +    await reload()
-+    // 删的是激活项 → 激活项已变动 → 内核需重启以对齐（若还有剩余 key）。
-+    if (wasActive && keys().length > 0) setNeedsRestart(true)
++    try {
++      await window.api.channelConfigReload()
++    } catch {
++      // 热重载失败不阻断；下次启动时文件配置仍会生效。
++    }
 +  }
 +
 +  // [cx] 点击卡片切换激活 key —— 零重启。新设计下每个 key 都被主进程注入成一个独立的
@@ -1190,16 +1162,6 @@ index 000000000..07a0701d3
 +    }
 +  }
 +
-+  // [cx] US-009: 立即重启内核。复用既有 relaunch（stopSidecars → app.relaunch，US-002 结论：
-+  // 这是当前唯一「换 key 生效」路径；会话历史持久化在 DB，仅进行中的流式生成会被打断）。
-+  function restartNow(): void {
-+    try {
-+      window.api.relaunch()
-+    } catch {
-+      // relaunch 只是发一条 ipc 消息，正常不会抛出。
-+    }
-+  }
-+
 +  return (
 +    <div style={overlayStyle} onClick={props.onClose} role="presentation">
 +      <div
@@ -1215,25 +1177,6 @@ index 000000000..07a0701d3
 +            ✕
 +          </button>
 +        </div>
-+
-+        {/* [cx] 新增/删除 key 后的重启提示：新 key = 新 provider，内核只在启动时读 config，
-+            须重启 sidecar 才注册（切换已注册 key 走桥、零重启，不经此横幅）。 */}
-+        <Show when={needsRestart()}>
-+          <div style={restartBannerStyle}>
-+            <span style={{ flex: "1" }}>key 列表已更新，需重启内核后生效。重启会中断当前进行中的对话，聊天历史不受影响。</span>
-+            <button type="button" style={bannerButtonStyle} onClick={restartNow}>
-+              立即重启
-+            </button>
-+            <button
-+              type="button"
-+              style={{ ...closeButtonStyle, "font-size": "14px" }}
-+              aria-label="稍后重启"
-+              onClick={() => setNeedsRestart(false)}
-+            >
-+              ✕
-+            </button>
-+          </div>
-+        </Show>
 +
 +        <Switch>
 +          <Match when={initializing()}>
@@ -1415,8 +1358,8 @@ index 000000000..07a0701d3
 +    }
 +  }
 +
-+  // [cx] US-013: 导入成功后可直接设为激活（验收标准 #4）。setActive 后拉该 key 的 /v1/models
-+  // 落盘（供内核 config 注入可选模型），并提示需重启内核生效（US-002：config 启动期一次性注入）。
++  // [cx] US-013: 导入成功后可直接设为激活。setActive → channelConfigRefreshKey（主进程拉该 key
++  // 的 /v1/models 落盘 + 重写 OPENCODE_CONFIG 文件 + 热重载），该 key 即成为可用 provider——不重启进程。
 +  async function activateNow(id: string) {
 +    if (!id) {
 +      props.onClose()
@@ -1425,17 +1368,10 @@ index 000000000..07a0701d3
 +    setPhase({ status: "activating" })
 +    try {
 +      await window.api.channelKeysSetActive(id)
-+      const baseURL = props.request.baseURL || (import.meta.env.NEWAPI_BASE_URL ?? "")
-+      const models = await fetchModelsWith(baseURL, props.request.key)
-+      if (models.length > 0) {
-+        try {
-+          await window.api.channelKeysSetModels(id, models)
-+        } catch {
-+          // 模型缓存写入失败不阻断激活。
-+        }
-+      }
++      // 主进程拉模型 + 热重载（provider 出现）。失败不崩溃。
++      await window.api.channelConfigRefreshKey(id)
 +    } catch {
-+      // 设为激活失败——不崩溃，直接关闭（用户可在面板手动切换）。
++      // 设为激活/重载失败——不崩溃，直接关闭（用户可在面板手动切换）。
 +    }
 +    props.onClose()
 +  }
@@ -1456,8 +1392,6 @@ index 000000000..07a0701d3
 +              <div style={{ ...onboardTitleStyle, "text-align": "center" }}>✅ 导入成功</div>
 +              <p style={{ "margin-bottom": "16px", "text-align": "center" }}>
 +                「{props.request.label || maskKey(props.request.key) || "新 key"}」已加入本地列表。是否立即设为激活 key？
-+                <br />
-+                <span style={{ "font-size": "12px", color: "#9ca3af" }}>（激活后需重启内核生效）</span>
 +              </p>
 +              <div style={{ display: "flex", gap: "8px" }}>
 +                <button

@@ -22,10 +22,10 @@
 # 应用（在 opencode/ 内，基线为 brand/BASE_SHA，按 01→02→03→04→05 顺序）：
 #   git -C opencode apply --3way brand/patches/05-channel-keys-ipc.patch
 diff --git a/packages/desktop/src/main/ipc.ts b/packages/desktop/src/main/ipc.ts
-index 073d288e5..c3aa5cdcc 100644
+index 073d288e5..ad6a319f1 100644
 --- a/packages/desktop/src/main/ipc.ts
 +++ b/packages/desktop/src/main/ipc.ts
-@@ -9,6 +9,18 @@ import type { FatalRendererError, ServerReadyData, TitlebarTheme } from "../prel
+@@ -9,6 +9,21 @@ import type { FatalRendererError, ServerReadyData, TitlebarTheme } from "../prel
  import { runDesktopMenuAction } from "./desktop-menu-actions"
  import { assertAttachmentBudget, createPickedFileAuthorizations } from "./attachment-picker"
  import { getStore, removeStoreFileIfEmpty } from "./store"
@@ -41,10 +41,13 @@ index 073d288e5..c3aa5cdcc 100644
 +  setActiveChannelKey,
 +  setChannelKeyModels,
 +} from "./store-channel-keys"
++// [cx] 内置渠道热重载：增删 key 后重写 OPENCODE_CONFIG 文件 + POST /global/dispose，
++// 让内核重建 instance 读到新 provider——不重启进程（切换已注册 key 走前端桥、零打断）。
++import { reloadChannelConfig, refreshKeyModelsAndReload } from "./server"
  import { getPinchZoomEnabled, getWindowID, setPinchZoomEnabled, setTitlebar, updateTitlebar } from "./windows"
  import type { UpdaterController } from "./updater-controller"
  import { createUpdaterSubscriptions } from "./updater-subscriptions"
-@@ -112,6 +124,34 @@ export function registerIpcHandlers(deps: Deps) {
+@@ -112,6 +127,45 @@ export function registerIpcHandlers(deps: Deps) {
      return Object.keys(store.store).length
    })
  
@@ -76,14 +79,25 @@ index 073d288e5..c3aa5cdcc 100644
 +    return JSON.stringify(readChannelKeysState())
 +  })
 +
++  // [cx] 内置渠道热重载：新增 key 后调此——主进程拉该 key 的 /v1/models（无 CORS）落盘，
++  // 重写 OPENCODE_CONFIG 文件 + POST /global/dispose，内核重建 instance 即出现该 provider。
++  // 不重启进程；dispose 会中断进行中的流式回复（同原生加 provider），故 renderer 在空闲时触发。
++  ipcMain.handle("channel-config-refresh-key", async (_event: IpcMainInvokeEvent, id: string) => {
++    await refreshKeyModelsAndReload(id)
++  })
++  // [cx] 内置渠道热重载（不拉模型）：删除 key 后调此——重写文件 + dispose，provider 随之消失。
++  ipcMain.handle("channel-config-reload", async () => {
++    await reloadChannelConfig()
++  })
++
    ipcMain.handle(
      "open-directory-picker",
      async (_event: IpcMainInvokeEvent, opts?: { multiple?: boolean; title?: string; defaultPath?: string }) => {
 diff --git a/packages/desktop/src/preload/index.ts b/packages/desktop/src/preload/index.ts
-index 47a757a55..ed87fe416 100644
+index 47a757a55..166886e75 100644
 --- a/packages/desktop/src/preload/index.ts
 +++ b/packages/desktop/src/preload/index.ts
-@@ -74,6 +74,14 @@ const api: ElectronAPI = {
+@@ -74,6 +74,17 @@ const api: ElectronAPI = {
    storeKeys: (name) => ipcRenderer.invoke("store-keys", name),
    storeLength: (name) => ipcRenderer.invoke("store-length", name),
  
@@ -94,15 +108,18 @@ index 47a757a55..ed87fe416 100644
 +  channelKeysUpdateLabel: (id, label) => ipcRenderer.invoke("channel-keys-update-label", id, label),
 +  channelKeysSetActive: (id) => ipcRenderer.invoke("channel-keys-set-active", id),
 +  channelKeysSetModels: (id, models) => ipcRenderer.invoke("channel-keys-set-models", id, models),
++  // [cx] 内置渠道热重载：新增 key 后拉模型+重载（provider 出现）/ 删除后重载（provider 消失）。不重启进程。
++  channelConfigRefreshKey: (id) => ipcRenderer.invoke("channel-config-refresh-key", id),
++  channelConfigReload: () => ipcRenderer.invoke("channel-config-reload"),
 +
    getWindowCount: () => ipcRenderer.invoke("get-window-count"),
    getWindowID: () => ipcRenderer.invoke("get-window-id"),
    onMenuCommand: (cb) => {
 diff --git a/packages/desktop/src/preload/types.ts b/packages/desktop/src/preload/types.ts
-index b57ac83e7..54924eaff 100644
+index b57ac83e7..40d829a00 100644
 --- a/packages/desktop/src/preload/types.ts
 +++ b/packages/desktop/src/preload/types.ts
-@@ -64,6 +64,16 @@ export type ElectronAPI = {
+@@ -64,6 +64,19 @@ export type ElectronAPI = {
    storeKeys: (name: string) => Promise<string[]>
    storeLength: (name: string) => Promise<number>
  
@@ -115,6 +132,9 @@ index b57ac83e7..54924eaff 100644
 +  channelKeysUpdateLabel: (id: string, label: string) => Promise<string>
 +  channelKeysSetActive: (id: string) => Promise<string>
 +  channelKeysSetModels: (id: string, models: string[]) => Promise<string>
++  // [cx] 内置渠道热重载：新增 key 后拉模型+重载 / 删除后重载。不重启进程。
++  channelConfigRefreshKey: (id: string) => Promise<void>
++  channelConfigReload: () => Promise<void>
 +
    getWindowCount: () => Promise<number>
    getWindowID: () => Promise<string>
