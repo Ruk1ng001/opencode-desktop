@@ -140,3 +140,28 @@ packages/desktop/src/preload/types.ts
 #     main/index.ts），按 NN 序在其后应用。
 [06-deeplink-cx]
 packages/desktop/src/main/index.ts
+
+# provider 切换桥 + 侧边栏账户入口（多 provider 改造）：
+#   本补丁是补丁层首次触碰 @opencode-ai/app 包（此前 01-06 只改 desktop 包）。改动极小、
+#   均为薄叠加，跟随上游升级时重放即可。三个文件：
+#   - directory-layout.tsx：在 LocalProvider 作用域内挂一个极小的桥接组件
+#     CxProviderSwitchBridge。账户面板（BalanceLauncher）挂在 opencode 组件树之外、够不到
+#     useLocal()，故经 window CustomEvent `cx:select-provider`（detail:{providerID,modelID}）
+#     请求切换；桥接组件收到后调用与原生 model 选择器同一入口 useLocal().model.set(...)，把当前
+#     会话切到该 provider —— 纯请求级、零重启，效果同原生「闪一下」。复用仓库已有的 deep-link
+#     事件桥同款模式（index.tsx 派发 / layout.tsx 监听）。
+#   - layout.tsx：侧边栏底部（settings / help 同排）新增账户入口 IconButton（仅 desktop 平台
+#     渲染），点击派发 `cx:open-account` 事件，由树外的 BalanceLauncher（desktop 包）接管弹面板。
+#     用字符串事件解耦，避免 app 包反向依赖 desktop 包。
+#   - sidebar-shell.tsx：SidebarContent 新增可选 slot renderAccountButton，渲染在底部设置齿轮
+#     上方；不传则不渲染（web 等平台不显示）。
+#
+#   多 provider 改造总述（配合 03 的 buildChannelConfigContent 多 provider 注入 + 04 的
+#   channelProviderId）：每个本地 key 被注入成一个独立 opencode provider（providerID =
+#   channelProviderId(key.id) = `newapi-<id前8位>`），内核启动时同时握有全部 key 的 provider。
+#   在已注入的 key 之间切换是纯请求级（renderer model.set），零重启；只有新增/删除 key 改变了
+#   provider 集合，才需重启一次让新 provider 注册进内核（面板侧沿用 relaunch，仅此一处）。
+[07-provider-switch-bridge]
+packages/app/src/pages/directory-layout.tsx
+packages/app/src/pages/layout.tsx
+packages/app/src/pages/layout/sidebar-shell.tsx

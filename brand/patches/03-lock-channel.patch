@@ -56,74 +56,116 @@ index d69e6feec..4c90be269 100644
  
  interface ImportMeta {
 diff --git a/packages/desktop/src/main/server.ts b/packages/desktop/src/main/server.ts
-index b213dbc82..aa319d4b2 100644
+index b213dbc82..13f52de03 100644
 --- a/packages/desktop/src/main/server.ts
 +++ b/packages/desktop/src/main/server.ts
 @@ -6,6 +6,7 @@ import { getLogger } from "./logging"
  import { getUserShell, loadShellEnv } from "./shell-env"
  import { getStore } from "./store"
  import { DEFAULT_SERVER_URL_KEY } from "./store-keys"
-+import { readActiveChannelKey } from "./store-channel-keys"
++import { readActiveChannelKey, readChannelKeysState, channelProviderId, type ChannelKey } from "./store-channel-keys"
  
  export type HealthCheck = { wait: Promise<void> }
  
-@@ -207,6 +208,55 @@ export async function checkHealth(url: string, password?: string | null): Promis
+@@ -207,6 +208,97 @@ export async function checkHealth(url: string, password?: string | null): Promis
    }
  }
  
-+// [cx] US-003/US-004/US-008: 内置渠道「默认注入」。三者齐备时构造一份 opencode config，
-+// 经 OPENCODE_CONFIG_CONTENT 传给内核 sidecar。该变量在内核 config 合并链里排在全局 / 项目
-+// 配置之后，故注入的 newapi provider 与默认 model 会覆盖用户同名配置，实现开箱即走内置渠道；
-+// 值缺失（如 dev、且无本地激活 key）则不注入，退回原生行为。结构对齐 brand/opencode.template.json。
++// [cx] US-003/US-004/US-008/多provider: 内置渠道「默认注入」。构造一份 opencode config，经
++// OPENCODE_CONFIG_CONTENT 传给内核 sidecar。该变量在内核 config 合并链里排在全局 / 项目配置
++// 之后，故注入的 provider 与默认 model 会覆盖用户同名配置，实现开箱即走内置渠道；无任何可用
++// 渠道值时不注入，退回原生行为。结构对齐 brand/opencode.template.json。
 +//
-+// [cx] US-004 token 来源改造 —— 数据流说明：
-+//   baseURL / apiKey 优先来自「本地激活 key」（US-003 的 store-channel-keys）。该存储是主进程侧
-+//   的 electron-store（opencode.settings，JSON 明文，仅本地），server.ts 与 store-channel-keys.ts
-+//   同在主进程，故此处直接 readActiveChannelKey() 同步读取，无需经 IPC / renderer 中转（renderer
-+//   若要改激活项，也是经 IPC 落到同一个 store，主进程下次 spawn sidecar 时即读到新值）。
-+//   本地无激活 key 时回退到构建期内联的内置默认值（import.meta.env.NEWAPI_*，见 electron.vite
-+//   main.define）；两者都无则整体缺失、不注入。
-+//   注意：内核 config 是启动期一次性注入（US-002 结论），切换激活 key 后须重启 sidecar 才生效。
++// [cx] 多 provider 改造 —— 核心数据流：
++//   把「每个本地 key」注入成一个**独立 provider**（providerID = channelProviderId(key.id)），
++//   而不再是「一个 newapi provider，内容随激活 key 变」。这样内核启动时就同时握着所有 key 的
++//   provider，opencode 原生 model 选择器能列出每个 key 及其可用模型；**在已注入的 key 之间切换
++//   是纯请求级行为（renderer 侧 model.set），无需重启 sidecar**。只有「新增 / 删除 key」改变了
++//   provider 集合，才需重启一次让新 provider 注册进内核。
 +//
-+// [cx] US-009 可选模型注入 —— 模型列表来源：
-+//   优先取激活 key 缓存的 models（切换激活 key 时拉该 key 的 /v1/models 落盘，见 store-channel-keys
-+//   的 setChannelKeyModels）；该 key 尚无缓存时回退构建期内置 NEWAPI_MODEL 合成单条。列出的每个
-+//   模型都写进 provider.newapi.models，成为内核里「该 key 的可选模型」；默认 model 取 NEWAPI_MODEL
-+//   （若在列表内）否则列表首项。重建 config 后须重启 sidecar 才让新模型集合生效。
++//   provider 来源优先级：
++//     1. 本地 stored keys（store-channel-keys，主进程 electron-store，同进程同步读）——每个 key
++//        一个 provider；
++//     2. 本地无任何 key 时，回退到构建期内联的内置默认单 provider（import.meta.env.NEWAPI_*，见
++//        electron.vite main.define），保证首启（尚未导入 key）也能开箱即用；
++//     3. 两者都无 → 不注入，退回 opencode 原生行为（不破坏本地 dev）。
++//
++//   每个 provider 的可用模型：优先用该 key 缓存的 models（切换 / 导入时拉 /v1/models 落盘，见
++//   store-channel-keys.setChannelKeyModels）；无缓存时回退构建期内置 NEWAPI_MODEL 合成单条；再无
++//   则该 provider 不带具体模型（openai-compatible 允许运行时指定，但选择器会空——故尽量让 key 带
++//   models 缓存）。顶层默认 model 指向「激活 key 的 provider / 其默认模型」，保证开箱即用激活 key。
 +function buildChannelConfigContent(): string | undefined {
-+  const activeKey = readActiveChannelKey()
-+  const baseURL = activeKey?.baseURL || import.meta.env.NEWAPI_BASE_URL
-+  const apiKey = activeKey?.key || import.meta.env.NEWAPI_API_KEY
-+  if (!baseURL || !apiKey) return undefined
-+
-+  // 可选模型集合：激活 key 缓存的 models 优先；无缓存回退构建期内置默认单条。
++  const state = readChannelKeysState()
 +  const builtinModel = import.meta.env.NEWAPI_MODEL
-+  const cached = activeKey?.models?.filter((m) => typeof m === "string" && m.length > 0) ?? []
-+  const modelList = cached.length > 0 ? cached : builtinModel ? [builtinModel] : []
-+  if (modelList.length === 0) return undefined
 +
-+  // 默认模型：内置默认在列表内则用它，否则用列表首项。
-+  const defaultModel = builtinModel && modelList.includes(builtinModel) ? builtinModel : modelList[0]
-+  const models = Object.fromEntries(modelList.map((id) => [id, { name: id }]))
++  // 把单个 key 构造成一个 provider 条目。models 为空则跳过该 key（无法确定可选模型）。
++  // 返回 { id, providerId, defaultModel, entry } 或 null。
++  function buildProvider(key: { id: string; label: string; key: string; baseURL: string; models?: string[] }) {
++    const baseURL = key.baseURL || import.meta.env.NEWAPI_BASE_URL
++    const apiKey = key.key || import.meta.env.NEWAPI_API_KEY
++    if (!baseURL || !apiKey) return null
 +
-+  return JSON.stringify({
-+    $schema: "https://opencode.ai/config.json",
-+    model: `newapi/${defaultModel}`,
-+    provider: {
-+      newapi: {
++    const cached = key.models?.filter((m) => typeof m === "string" && m.length > 0) ?? []
++    const modelList = cached.length > 0 ? cached : builtinModel ? [builtinModel] : []
++    if (modelList.length === 0) return null
++
++    const defaultModel = builtinModel && modelList.includes(builtinModel) ? builtinModel : modelList[0]
++    const models = Object.fromEntries(modelList.map((id) => [id, { name: id }]))
++    const providerId = channelProviderId(key.id)
++    return {
++      providerId,
++      defaultModel,
++      entry: {
 +        npm: "@ai-sdk/openai-compatible",
-+        name: "内置渠道",
++        // provider 显示名 = label + 短 id 后缀（与 renderer 侧一致，见 channelProviderId）。
++        name: `${key.label || "内置渠道"} (${key.id.slice(0, 8)})`,
 +        options: { baseURL, apiKey },
 +        models,
 +      },
-+    },
++    }
++  }
++
++  const provider: Record<string, unknown> = {}
++  let topModel: string | undefined
++
++  if (state.keys.length > 0) {
++    // 有本地 key：每个 key 注入成独立 provider。
++    for (const key of state.keys) {
++      const built = buildProvider(key)
++      if (!built) continue
++      provider[built.providerId] = built.entry
++      // 顶层默认 model 指向激活 key（无激活项时用首个成功构造的 provider）。
++      const isActive = key.id === state.activeKeyId
++      if (isActive || !topModel) topModel = `${built.providerId}/${built.defaultModel}`
++    }
++  } else {
++    // 无本地 key：回退构建期内置默认单 provider（首启开箱即用）。
++    const baseURL = import.meta.env.NEWAPI_BASE_URL
++    const apiKey = import.meta.env.NEWAPI_API_KEY
++    if (baseURL && apiKey && builtinModel) {
++      provider["newapi"] = {
++        npm: "@ai-sdk/openai-compatible",
++        name: "内置渠道",
++        options: { baseURL, apiKey },
++        models: { [builtinModel]: { name: builtinModel } },
++      }
++      topModel = `newapi/${builtinModel}`
++    }
++  }
++
++  if (Object.keys(provider).length === 0 || !topModel) return undefined
++
++  return JSON.stringify({
++    $schema: "https://opencode.ai/config.json",
++    model: topModel,
++    provider,
 +  })
 +}
 +
  function createSidecarEnv(): Record<string, string> {
    const env = Object.fromEntries(
      Object.entries(process.env).flatMap(([key, value]) => (value === undefined ? [] : [[key, String(value)]])),
-@@ -214,6 +264,9 @@ function createSidecarEnv(): Record<string, string> {
+@@ -214,6 +306,9 @@ function createSidecarEnv(): Record<string, string> {
    delete env.DEBUG
    if (process.platform === "linux") delete env.LD_PRELOAD
    if (!app.isPackaged) env.OPENCODE_DISABLE_CHANNEL_DB = "1"

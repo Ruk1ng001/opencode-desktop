@@ -7,6 +7,9 @@
 #      - 类型 ChannelKey { id, label, key, baseURL, models? } 与 ChannelKeysState { keys, activeKeyId }。
 #      - readChannelKeysState / readActiveChannelKey / addChannelKey / removeChannelKey /
 #        updateChannelKeyLabel / setActiveChannelKey / setChannelKeyModels。
+#      - channelProviderId(keyId) —— 由 key.id 算出稳定 providerID（`newapi-<id前8位>`）。
+#        主进程 server.ts 注入多 provider、renderer 派发 cx:select-provider 切换事件都用它，
+#        两端必须同源同算法，否则切换事件匹配不到 provider。
 #      - 复用既有 electron-store（store.ts），数据写在默认 settings store，明文仅存本地。
 #      - 无 key 时读取激活项返回 null，不报错（读取做了结构校验与容错）。
 #   US-009 增补：ChannelKey 新增可选 models（切换激活 key 时拉该 key 的 /v1/models 缓存），
@@ -19,10 +22,10 @@
 #   git -C opencode apply --3way brand/patches/04-channel-keys-store.patch
 diff --git a/packages/desktop/src/main/store-channel-keys.ts b/packages/desktop/src/main/store-channel-keys.ts
 new file mode 100644
-index 000000000..1186a277a
+index 000000000..deef7f087
 --- /dev/null
 +++ b/packages/desktop/src/main/store-channel-keys.ts
-@@ -0,0 +1,135 @@
+@@ -0,0 +1,143 @@
 +// [cx] US-003: 本地 key 列表存储模型 —— 多渠道 API Key 的持久化读写封装。
 +//
 +// 目的：让用户导入的多个 `sk-…` API Token 持久保存在本地，重启 App 后仍在，
@@ -64,6 +67,14 @@ index 000000000..1186a277a
 +}
 +
 +const EMPTY_STATE: ChannelKeysState = { keys: [], activeKeyId: null }
++
++// [cx] 多 provider：由 key.id 派生稳定的 opencode providerID。主进程（server.ts 构造 config）
++// 与 renderer（balance-panel 派发切换事件）两侧都用此函数，保证同一 key 算出同一 providerID，
++// 桥接切换才能命中正确 provider。取 id 前 8 位即可（randomUUID 前 8 位碰撞概率可忽略），
++// 前缀 newapi- 便于识别来源。providerID 只允许 [a-z0-9-]，UUID 片段天然满足。
++export function channelProviderId(keyId: string): string {
++  return `newapi-${keyId.slice(0, 8)}`
++}
 +
 +// 读取整份状态。store 里没有记录（首次启动）时返回空状态，不报错。
 +export function readChannelKeysState(): ChannelKeysState {
