@@ -57,7 +57,7 @@ index d69e6feec..4c90be269 100644
  
  interface ImportMeta {
 diff --git a/packages/desktop/src/main/server.ts b/packages/desktop/src/main/server.ts
-index b213dbc82..4b18bd37f 100644
+index b213dbc82..4867eb4d4 100644
 --- a/packages/desktop/src/main/server.ts
 +++ b/packages/desktop/src/main/server.ts
 @@ -1,3 +1,4 @@
@@ -275,16 +275,20 @@ index b213dbc82..4b18bd37f 100644
  function createSidecarEnv(): Record<string, string> {
    const env = Object.fromEntries(
      Object.entries(process.env).flatMap(([key, value]) => (value === undefined ? [] : [[key, String(value)]])),
-@@ -214,6 +397,14 @@ function createSidecarEnv(): Record<string, string> {
+@@ -214,6 +397,18 @@ function createSidecarEnv(): Record<string, string> {
    delete env.DEBUG
    if (process.platform === "linux") delete env.LD_PRELOAD
    if (!app.isPackaged) env.OPENCODE_DISABLE_CHANNEL_DB = "1"
 +  // [cx] 内置渠道注入：spawn 前写好 OPENCODE_CONFIG 文件，用环境变量指向它。
 +  //   不用 OPENCODE_CONFIG_CONTENT（值在合并链里覆盖一切、且进程启动后不可变，换 key 必须重启）；
 +  //   改用 OPENCODE_CONFIG 指向文件——内核 loadInstanceState 时现读（不缓存），增删 key 后主进程
-+  //   重写文件 + dispose 即热重载生效，无需重启进程。仅当有可用渠道值时才设该变量。
-+  const hasConfig = writeChannelConfigFile()
-+  if (hasConfig) env.OPENCODE_CONFIG = getChannelConfigPath()
++  //   重写文件 + dispose 即热重载生效，无需重启进程。
++  //   关键：**始终**设 OPENCODE_CONFIG（即便当前无 key，writeChannelConfigFile 也会写 `{}`）。
++  //   内核只在进程启动时读一次 Flag.OPENCODE_CONFIG；若首启无 key 时不设该变量，则该进程整个
++  //   生命周期都不认这个文件——之后热重载写文件、dispose 也不会重读，导致后加的 key 永不生效。
++  //   写空对象内核可容忍；有 key 后热重载重写文件即被读到。
++  writeChannelConfigFile()
++  env.OPENCODE_CONFIG = getChannelConfigPath()
 +  // 清掉可能从 process.env 继承来的旧注入方式，避免覆盖文件配置。
 +  delete env.OPENCODE_CONFIG_CONTENT
    return env
