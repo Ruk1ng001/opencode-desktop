@@ -144,17 +144,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # [cx] 临时：只打包 Windows + macOS Intel(x64)。arm64 mac 与 linux 已注释，需要时恢复。
           # .dmg + .zip（Apple Silicon）：arm64 runner 原生编译，装 arm64 的 node-pty。
           # dmg 供人工下载，zip 供 electron-updater 自更新（macOS 只能用 zip 更新）。
           # meta_subdir 对齐 finalize-latest-yml.ts 期望的子目录名（合并 mac 双架构 latest-mac.yml）。
-          - os: macos-latest
-            platform_flag: "--mac"
-            arch_flag: "--arm64"
-            artifact_glob: |
-              opencode/packages/desktop/dist/*.dmg
-              opencode/packages/desktop/dist/*.zip
-            artifact_name: cx-dmg-arm64
-            meta_subdir: latest-yml-aarch64-apple-darwin
+          # - os: macos-latest
+          #   platform_flag: "--mac"
+          #   arch_flag: "--arm64"
+          #   artifact_glob: |
+          #     opencode/packages/desktop/dist/*.dmg
+          #     opencode/packages/desktop/dist/*.zip
+          #   artifact_name: cx-dmg-arm64
+          #   meta_subdir: latest-yml-aarch64-apple-darwin
           # .dmg + .zip（Intel）：x64 runner 原生编译，装 x64 的 node-pty。
           # 关键：node-pty 是按平台拆分的独立子包（@lydell/node-pty-darwin-<arch>），
           # 靠 optionalDependencies 只装当前 runner 架构那一个。故 x64 包必须在 x64
@@ -175,13 +176,13 @@ jobs:
             artifact_glob: "opencode/packages/desktop/dist/*.exe"
             artifact_name: cx-exe
             meta_subdir: latest-yml-x86_64-pc-windows-msvc
-          # .AppImage 用 linux runner
-          - os: ubuntu-latest
-            platform_flag: "--linux"
-            arch_flag: ""
-            artifact_glob: "opencode/packages/desktop/dist/*.AppImage"
-            artifact_name: cx-appimage
-            meta_subdir: latest-yml-x86_64-unknown-linux-gnu
+          # .AppImage 用 linux runner（临时注释，需要时恢复）
+          # - os: ubuntu-latest
+          #   platform_flag: "--linux"
+          #   arch_flag: ""
+          #   artifact_glob: "opencode/packages/desktop/dist/*.AppImage"
+          #   artifact_name: cx-appimage
+          #   meta_subdir: latest-yml-x86_64-unknown-linux-gnu
     runs-on: ${{ matrix.os }}
     env:
       # 无签名凭据时降级出未签名包（验收只要求出包，不要求签名）。
