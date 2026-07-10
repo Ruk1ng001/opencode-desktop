@@ -1,9 +1,24 @@
+# 01-balance-panel —— 独立余额 / 账户面板（US-005 起，含面板重设计）
+#
+# 首个补丁：新增独立于聊天 UI 的余额面板入口 + 面板本体。此后各 US 在此文件上叠加
+# （US-006 profile、US-008 卡片、US-009 多 key 管理、US-011 引导、US-012 自动切换、
+#  US-013 深链导入），以及「面板重设计」：左右两栏大浮层 + 环形图（纯 CSS conic-gradient）
+#  + 金色深色主题；每个 key 卡片展示余额（token_remain）/ 今日 / 总额 + per-key 进度条
+#  （不限额 key 显示「不限额」）；左侧账户卡环形图展示账户使用率 + 余额 + 充值。
+#  账户级今日消耗 used_today 为可选字段（后端未实现时显示「—」，见 brand/docs/api-app-profile.md）。
+# renderer index.tsx 挂载 BalanceLauncher（挂在 opencode 组件树之外）。
+# 依赖：纯 renderer，不改主进程；不与 02-08 共享文件（本文件 + index.tsx 挂载点）。
+# 应用（在 opencode/ 内，基线为 brand/BASE_SHA）：
+#   git -C opencode apply brand/patches/01-balance-panel.patch
+[01-balance-panel]
+packages/desktop/src/renderer/balance/balance-panel.tsx
+packages/desktop/src/renderer/index.tsx
 diff --git a/packages/desktop/src/renderer/balance/balance-panel.tsx b/packages/desktop/src/renderer/balance/balance-panel.tsx
 new file mode 100644
-index 000000000..f0429a0e8
+index 000000000..c4490c247
 --- /dev/null
 +++ b/packages/desktop/src/renderer/balance/balance-panel.tsx
-@@ -0,0 +1,1513 @@
+@@ -0,0 +1,1655 @@
 +// [cx] 独立账户面板 —— 对接 new-api 取用户名/头像/额度/用量（US-006）+ 充值入口（US-007）
 +//     + key 列表卡片 UI + 顶部账户汇总（US-008）+ 增删改 key 与手动切换激活 key（US-009）
 +//     + 首启无 key 引导（US-011）
@@ -130,6 +145,8 @@ index 000000000..f0429a0e8
 +  avatar: string
 +  quota: number
 +  usedQuota: number
++  // [cx] 面板重设计: 账户级今日消耗（可选）。后端未实现该字段时为 null，UI 显示「—」。
++  usedToday: number | null
 +  tokenRemain: number
 +  tokenUsed: number
 +  tokenUsedToday: number
@@ -147,6 +164,7 @@ index 000000000..f0429a0e8
 +  avatar?: string
 +  quota?: number
 +  used_quota?: number
++  used_today?: number
 +  token_remain?: number
 +  token_used?: number
 +  token_used_today?: number
@@ -156,6 +174,7 @@ index 000000000..f0429a0e8
 +    avatar?: string
 +    quota?: number
 +    used_quota?: number
++    used_today?: number
 +    token_remain?: number
 +    token_used?: number
 +    token_used_today?: number
@@ -283,6 +302,7 @@ index 000000000..f0429a0e8
 +      avatar: p.avatar ?? "",
 +      quota: p.quota ?? 0,
 +      usedQuota: p.used_quota ?? 0,
++      usedToday: typeof p.used_today === "number" ? p.used_today : null,
 +      tokenRemain: p.token_remain ?? 0,
 +      tokenUsed: p.token_used ?? 0,
 +      tokenUsedToday: p.token_used_today ?? 0,
@@ -380,19 +400,19 @@ index 000000000..f0429a0e8
 +  display: "flex",
 +  "align-items": "center",
 +  "justify-content": "center",
-+  background: "rgba(0,0,0,0.5)",
++  background: "rgba(0,0,0,0.6)",
 +}
 +
 +const panelStyle: JSX.CSSProperties = {
 +  width: "min(440px, 92vw)",
 +  "max-height": "90vh",
 +  overflow: "auto",
-+  background: "#161618",
-+  color: "#e5e5e5",
-+  border: "1px solid rgba(255,255,255,0.12)",
++  background: "#1a1815",
++  color: "#ece7dd",
++  border: "1px solid rgba(255,255,255,0.05)",
 +  "border-radius": "12px",
 +  padding: "20px",
-+  "box-shadow": "0 12px 40px rgba(0,0,0,0.5)",
++  "box-shadow": "0 12px 40px rgba(0,0,0,0.6)",
 +  "font-size": "14px",
 +}
 +
@@ -406,7 +426,7 @@ index 000000000..f0429a0e8
 +const stateBoxStyle: JSX.CSSProperties = {
 +  padding: "24px 16px",
 +  "text-align": "center",
-+  color: "#9ca3af",
++  color: "#847b6e",
 +  "font-size": "13px",
 +  "line-height": "1.6",
 +}
@@ -426,13 +446,13 @@ index 000000000..f0429a0e8
 +const onboardTitleStyle: JSX.CSSProperties = {
 +  "font-size": "15px",
 +  "font-weight": "600",
-+  color: "#f5f5f5",
++  color: "#ece7dd",
 +  "margin-bottom": "8px",
 +}
 +
 +const onboardDescStyle: JSX.CSSProperties = {
 +  "font-size": "13px",
-+  color: "#9ca3af",
++  color: "#847b6e",
 +  "line-height": "1.6",
 +  "margin-bottom": "6px",
 +}
@@ -440,7 +460,7 @@ index 000000000..f0429a0e8
 +const closeButtonStyle: JSX.CSSProperties = {
 +  background: "transparent",
 +  border: "none",
-+  color: "#9ca3af",
++  color: "#847b6e",
 +  "font-size": "18px",
 +  cursor: "pointer",
 +  "line-height": "1",
@@ -453,8 +473,8 @@ index 000000000..f0429a0e8
 +  "margin-top": "4px",
 +  "border-radius": "8px",
 +  border: "none",
-+  background: "#2563eb",
-+  color: "#ffffff",
++  background: "#d4a24e",
++  color: "#1a1512",
 +  "font-size": "14px",
 +  "font-weight": "500",
 +  cursor: "pointer",
@@ -463,14 +483,14 @@ index 000000000..f0429a0e8
 +const hintStyle: JSX.CSSProperties = {
 +  "margin-top": "10px",
 +  "font-size": "12px",
-+  color: "#9ca3af",
++  color: "#847b6e",
 +  "text-align": "center",
 +}
 +
 +// [cx] US-008: 顶部账户汇总区（激活 key 账户）。
 +const summaryStyle: JSX.CSSProperties = {
-+  background: "rgba(255,255,255,0.04)",
-+  border: "1px solid rgba(255,255,255,0.08)",
++  background: "rgba(255,255,255,0.03)",
++  border: "1px solid rgba(255,255,255,0.05)",
 +  "border-radius": "10px",
 +  padding: "16px",
 +  "margin-bottom": "18px",
@@ -488,7 +508,7 @@ index 000000000..f0429a0e8
 +  height: "44px",
 +  "border-radius": "9999px",
 +  "object-fit": "cover",
-+  border: "1px solid rgba(255,255,255,0.12)",
++  border: "1px solid rgba(255,255,255,0.05)",
 +}
 +
 +const avatarFallbackStyle: JSX.CSSProperties = {
@@ -498,8 +518,8 @@ index 000000000..f0429a0e8
 +  display: "flex",
 +  "align-items": "center",
 +  "justify-content": "center",
-+  background: "#2563eb",
-+  color: "#ffffff",
++  background: "#d4a24e",
++  color: "#1a1512",
 +  "font-size": "20px",
 +  "font-weight": "600",
 +}
@@ -507,7 +527,7 @@ index 000000000..f0429a0e8
 +const usernameStyle: JSX.CSSProperties = {
 +  "font-size": "16px",
 +  "font-weight": "600",
-+  color: "#f5f5f5",
++  color: "#ece7dd",
 +}
 +
 +// [cx] US-008: 一键刷新按钮（顶部汇总右上角）。加载中禁用并改文案，作为反馈。
@@ -515,9 +535,9 @@ index 000000000..f0429a0e8
 +  "margin-left": "auto",
 +  padding: "6px 12px",
 +  "border-radius": "8px",
-+  border: "1px solid rgba(255,255,255,0.14)",
-+  background: "rgba(255,255,255,0.06)",
-+  color: "#e5e5e5",
++  border: "1px solid rgba(255,255,255,0.05)",
++  background: "rgba(255,255,255,0.05)",
++  color: "#ece7dd",
 +  "font-size": "12px",
 +  "font-weight": "500",
 +  cursor: "pointer",
@@ -532,20 +552,20 @@ index 000000000..f0429a0e8
 +
 +const summaryLabelStyle: JSX.CSSProperties = {
 +  "font-size": "12px",
-+  color: "#9ca3af",
++  color: "#847b6e",
 +}
 +
 +const summaryValueStyle: JSX.CSSProperties = {
 +  "font-size": "15px",
 +  "font-weight": "600",
-+  color: "#f5f5f5",
++  color: "#ece7dd",
 +}
 +
 +const progressTrackStyle: JSX.CSSProperties = {
 +  width: "100%",
 +  height: "6px",
 +  "border-radius": "9999px",
-+  background: "rgba(255,255,255,0.08)",
++  background: "rgba(255,255,255,0.05)",
 +  "margin-top": "6px",
 +  overflow: "hidden",
 +}
@@ -556,13 +576,13 @@ index 000000000..f0429a0e8
 +  "align-items": "center",
 +  "justify-content": "space-between",
 +  "font-size": "12px",
-+  color: "#9ca3af",
++  color: "#847b6e",
 +  "margin-bottom": "10px",
 +}
 +
 +const cardStyle: JSX.CSSProperties = {
-+  background: "rgba(255,255,255,0.04)",
-+  border: "1px solid rgba(255,255,255,0.08)",
++  background: "rgba(255,255,255,0.03)",
++  border: "1px solid rgba(255,255,255,0.05)",
 +  "border-radius": "8px",
 +  padding: "14px 16px",
 +  "margin-bottom": "12px",
@@ -570,8 +590,8 @@ index 000000000..f0429a0e8
 +
 +// [cx] US-008: 激活 key 卡片的选中态（高亮边框 + 淡蓝底）。
 +const activeCardStyle: JSX.CSSProperties = {
-+  border: "1px solid rgba(59,130,246,0.7)",
-+  background: "rgba(59,130,246,0.10)",
++  border: "1px solid rgba(212,162,78,0.55)",
++  background: "rgba(212,162,78,0.10)",
 +}
 +
 +// [cx] US-009: 非激活卡片可点击切换，加指针光标暗示可交互。
@@ -591,7 +611,7 @@ index 000000000..f0429a0e8
 +  height: "28px",
 +  "border-radius": "9999px",
 +  "object-fit": "cover",
-+  border: "1px solid rgba(255,255,255,0.12)",
++  border: "1px solid rgba(255,255,255,0.05)",
 +}
 +
 +const miniAvatarFallbackStyle: JSX.CSSProperties = {
@@ -601,8 +621,8 @@ index 000000000..f0429a0e8
 +  display: "flex",
 +  "align-items": "center",
 +  "justify-content": "center",
-+  background: "#2563eb",
-+  color: "#ffffff",
++  background: "#d4a24e",
++  color: "#1a1512",
 +  "font-size": "13px",
 +  "font-weight": "600",
 +}
@@ -610,20 +630,20 @@ index 000000000..f0429a0e8
 +const cardLabelStyle: JSX.CSSProperties = {
 +  "font-size": "14px",
 +  "font-weight": "600",
-+  color: "#f5f5f5",
++  color: "#ece7dd",
 +}
 +
 +const cardKeyStyle: JSX.CSSProperties = {
 +  "font-size": "12px",
-+  color: "#9ca3af",
++  color: "#847b6e",
 +  "font-family": "monospace",
 +}
 +
 +const activeBadgeStyle: JSX.CSSProperties = {
 +  padding: "2px 8px",
 +  "border-radius": "9999px",
-+  background: "rgba(59,130,246,0.85)",
-+  color: "#ffffff",
++  background: "rgba(212,162,78,0.9)",
++  color: "#1a1512",
 +  "font-size": "11px",
 +  "font-weight": "600",
 +}
@@ -635,19 +655,19 @@ index 000000000..f0429a0e8
 +
 +const metricLabelStyle: JSX.CSSProperties = {
 +  "font-size": "11px",
-+  color: "#9ca3af",
++  color: "#847b6e",
 +  "margin-bottom": "2px",
 +}
 +
 +const metricValueStyle: JSX.CSSProperties = {
 +  "font-size": "15px",
 +  "font-weight": "600",
-+  color: "#f5f5f5",
++  color: "#ece7dd",
 +}
 +
 +const cardStateStyle: JSX.CSSProperties = {
 +  "font-size": "12px",
-+  color: "#9ca3af",
++  color: "#847b6e",
 +}
 +
 +const cardUserRowStyle: JSX.CSSProperties = {
@@ -655,7 +675,7 @@ index 000000000..f0429a0e8
 +  "align-items": "center",
 +  gap: "6px",
 +  "font-size": "12px",
-+  color: "#cbd5e1",
++  color: "#ece7dd",
 +  "margin-bottom": "8px",
 +}
 +
@@ -671,9 +691,9 @@ index 000000000..f0429a0e8
 +const smallButtonStyle: JSX.CSSProperties = {
 +  padding: "5px 10px",
 +  "border-radius": "6px",
-+  border: "1px solid rgba(255,255,255,0.14)",
-+  background: "rgba(255,255,255,0.06)",
-+  color: "#e5e5e5",
++  border: "1px solid rgba(255,255,255,0.05)",
++  background: "rgba(255,255,255,0.05)",
++  color: "#ece7dd",
 +  "font-size": "12px",
 +  "font-weight": "500",
 +  cursor: "pointer",
@@ -688,14 +708,14 @@ index 000000000..f0429a0e8
 +
 +const primarySmallButtonStyle: JSX.CSSProperties = {
 +  ...smallButtonStyle,
-+  border: "1px solid rgba(59,130,246,0.6)",
-+  background: "rgba(59,130,246,0.85)",
-+  color: "#ffffff",
++  border: "1px solid rgba(212,162,78,0.6)",
++  background: "rgba(212,162,78,0.9)",
++  color: "#1a1512",
 +}
 +
 +const modelCountStyle: JSX.CSSProperties = {
 +  "font-size": "11px",
-+  color: "#9ca3af",
++  color: "#847b6e",
 +  "margin-top": "8px",
 +}
 +
@@ -705,9 +725,9 @@ index 000000000..f0429a0e8
 +  "box-sizing": "border-box",
 +  padding: "8px 10px",
 +  "border-radius": "6px",
-+  border: "1px solid rgba(255,255,255,0.14)",
++  border: "1px solid rgba(255,255,255,0.05)",
 +  background: "rgba(0,0,0,0.25)",
-+  color: "#e5e5e5",
++  color: "#ece7dd",
 +  "font-size": "13px",
 +  "margin-bottom": "8px",
 +}
@@ -728,19 +748,135 @@ index 000000000..f0429a0e8
 +  "justify-content": "space-between",
 +  gap: "12px",
 +  padding: "8px 0",
-+  "border-bottom": "1px solid rgba(255,255,255,0.06)",
++  "border-bottom": "1px solid rgba(255,255,255,0.05)",
 +  "font-size": "13px",
 +}
 +
 +const importRowLabelStyle: JSX.CSSProperties = {
-+  color: "#9ca3af",
++  color: "#847b6e",
 +  "white-space": "nowrap",
 +}
 +
 +const importRowValueStyle: JSX.CSSProperties = {
-+  color: "#e5e5e5",
++  color: "#ece7dd",
 +  "word-break": "break-all",
 +  "text-align": "right",
++}
++
++// [cx] 面板重设计：左右两栏大浮层容器。左账户卡固定宽，右 key 面板自适应，页面高度锁死、
++// 仅 key 列表内部滚动（避免整页拉伸）。
++const columnsStyle: JSX.CSSProperties = {
++  display: "flex",
++  gap: "16px",
++  "min-height": "0",
++  flex: "1",
++}
++
++const accountColStyle: JSX.CSSProperties = {
++  width: "260px",
++  "flex-shrink": "0",
++  display: "flex",
++  "flex-direction": "column",
++}
++
++const keyColStyle: JSX.CSSProperties = {
++  flex: "1",
++  "min-width": "0",
++  display: "flex",
++  "flex-direction": "column",
++  "min-height": "0",
++  background: "rgba(255,255,255,0.02)",
++  border: "1px solid rgba(255,255,255,0.06)",
++  "border-radius": "12px",
++}
++
++const keyColHeadStyle: JSX.CSSProperties = {
++  display: "flex",
++  "align-items": "center",
++  "justify-content": "space-between",
++  padding: "16px 18px",
++  "border-bottom": "1px solid rgba(255,255,255,0.06)",
++  "flex-shrink": "0",
++}
++
++const keyListScrollStyle: JSX.CSSProperties = {
++  "overflow-y": "auto",
++  padding: "14px 16px",
++  display: "flex",
++  "flex-direction": "column",
++  gap: "12px",
++  flex: "1",
++}
++
++// [cx] 面板重设计：环形图（纯 CSS conic-gradient），金色弧段=账户使用率，中心显示余额。
++const donutWrapStyle: JSX.CSSProperties = {
++  width: "150px",
++  height: "150px",
++  "border-radius": "9999px",
++  margin: "4px auto 16px",
++  display: "flex",
++  "align-items": "center",
++  "justify-content": "center",
++  position: "relative",
++}
++
++const donutHoleStyle: JSX.CSSProperties = {
++  position: "absolute",
++  width: "112px",
++  height: "112px",
++  "border-radius": "9999px",
++  background: "#1a1815",
++}
++
++const donutInnerStyle: JSX.CSSProperties = {
++  position: "relative",
++  "z-index": "1",
++  "text-align": "center",
++}
++
++const donutBalStyle: JSX.CSSProperties = {
++  "font-size": "22px",
++  "font-weight": "700",
++  color: "#e0b96a",
++}
++
++const donutLblStyle: JSX.CSSProperties = {
++  "font-size": "11px",
++  color: "#847b6e",
++  "margin-top": "2px",
++}
++
++const usageBoxStyle: JSX.CSSProperties = {
++  "margin-top": "20px",
++  "border-top": "1px solid rgba(255,255,255,0.06)",
++  "padding-top": "16px",
++}
++
++const usageRowStyle: JSX.CSSProperties = {
++  display: "flex",
++  "justify-content": "space-between",
++  "font-size": "13px",
++  "margin-bottom": "9px",
++}
++
++const usageValStyle: JSX.CSSProperties = {
++  color: "#e0b96a",
++  "font-weight": "600",
++}
++
++// [cx] 面板重设计：per-key 余额（token_remain）突出显示在卡片标题行。
++const cardBalStyle: JSX.CSSProperties = {
++  "font-size": "13px",
++  color: "#847b6e",
++}
++
++// [cx] 面板重设计：不限额标签（替代 per-key 进度条，unlimited 时无使用率意义）。
++const unlimitedTagStyle: JSX.CSSProperties = {
++  "font-size": "11px",
++  color: "#e0b96a",
++  border: "1px solid rgba(212,162,78,0.4)",
++  "border-radius": "9999px",
++  padding: "1px 8px",
 +}
 +
 +// 账户已用占比（0~100，整数）。总额度为 0 时返回 0，避免除零。
@@ -834,7 +970,7 @@ index 000000000..f0429a0e8
 +        <Match when={state() as Extract<KeyProfileState, { status: "ready" }>} keyed>
 +          {(ready) => (
 +            <>
-+              {/* 该 key 所属账户的头像 + 用户名（不同 key 可能是不同账户）。 */}
++              {/* 该 key 所属账户的头像 + 用户名 + 该 key 余额（余额提到显眼处）。 */}
 +              <div style={cardUserRowStyle}>
 +                <Show
 +                  when={ready.avatar}
@@ -842,18 +978,36 @@ index 000000000..f0429a0e8
 +                >
 +                  <img src={ready.avatar} alt="头像" style={miniAvatarStyle} />
 +                </Show>
-+                <span>{ready.username || "未命名用户"}</span>
++                <span style={{ flex: "1", "min-width": "0" }}>{ready.username || "未命名用户"}</span>
++                <span style={cardBalanceStyle}>
++                  余额 <b>{ready.unlimited ? "不限额" : formatCurrency(ready.tokenRemain)}</b>
++                </span>
 +              </div>
 +
-+              <div style={cardMetricsStyle}>
-+                <div>
-+                  <div style={metricLabelStyle}>该 key 已消耗</div>
-+                  <div style={metricValueStyle}>{formatCurrency(ready.tokenUsed)}</div>
++              {/* per-key 使用率进度条：已用 /（已用 + 剩余）。不限额时无分母意义，改显示标签。 */}
++              <Show
++                when={!ready.unlimited}
++                fallback={<div style={unlimitedTagStyle}>该 key 不限额</div>}
++              >
++                <div style={keyBarTrackStyle}>
++                  <div
++                    style={{
++                      width: `${keyUsedPercent(ready.tokenUsed, ready.tokenRemain)}%`,
++                      height: "100%",
++                      background: "linear-gradient(90deg,#d4a24e,#e0b96a)",
++                    }}
++                  />
 +                </div>
-+                <div>
-+                  <div style={metricLabelStyle}>今日消耗</div>
-+                  <div style={metricValueStyle}>{formatCurrency(ready.tokenUsedToday)}</div>
-+                </div>
++              </Show>
++
++              {/* 今日 / 总消耗小字（次要信息）。 */}
++              <div style={keyMetaTextStyle}>
++                今日 <em style={keyMetaEmStyle}>{formatCurrency(ready.tokenUsedToday)}</em> · 总消耗{" "}
++                <em style={keyMetaEmStyle}>{formatCurrency(ready.tokenUsed)}</em>
++                <Show when={!ready.unlimited}>
++                  {" "}
++                  · {keyUsedPercent(ready.tokenUsed, ready.tokenRemain)}%
++                </Show>
 +              </div>
 +            </>
 +          )}
@@ -1172,7 +1326,9 @@ index 000000000..f0429a0e8
 +        onClick={(event) => event.stopPropagation()}
 +      >
 +        <div style={headerStyle}>
-+          <span style={{ "font-size": "16px", "font-weight": "600" }}>账户</span>
++          <span style={{ "font-size": "18px", "font-weight": "600" }}>
++            账户 <span style={{ color: "#847b6e", "font-size": "13px", "font-weight": "400" }}>Account</span>
++          </span>
 +          <button type="button" style={closeButtonStyle} aria-label="关闭" onClick={props.onClose}>
 +            ✕
 +          </button>
@@ -1183,10 +1339,7 @@ index 000000000..f0429a0e8
 +            <div style={stateBoxStyle}>正在加载…</div>
 +          </Match>
 +
-+          {/* [cx] US-011: 首启无 key 引导。本地 key 列表为空且无内置默认 key（resolveKeyList
-+              返回空数组）时，展示明确的引导提示，说明「导入你的第一个 key 即可开始」，并直接
-+              展开新增 key 表单（startOpen）——引导即进入 US-009 的新增 key 流程，无需二次点击。
-+              有内置默认 key 或已有 key 时走 keys().length > 0 分支，不显示本引导。 */}
++          {/* [cx] US-011: 首启无 key 引导。 */}
 +          <Match when={keys().length === 0}>
 +            <div style={onboardBoxStyle}>
 +              <div style={onboardIconStyle}>🔑</div>
@@ -1200,128 +1353,132 @@ index 000000000..f0429a0e8
 +            <AddKeyForm onAdd={handleAdd} startOpen />
 +          </Match>
 +
++          {/* [cx] 面板重设计：左右两栏。左＝账户卡（环形图＋充值＋用量小结），右＝key 列表（内部滚动）。 */}
 +          <Match when={keys().length > 0}>
-+            {/* [cx] US-008: 顶部账户汇总（激活 key 账户）。 */}
-+            <div style={summaryStyle}>
-+              <div style={summaryHeadStyle}>
-+                <Show
-+                  when={(() => {
-+                    const p = activeProfile()
-+                    return p && p.status === "ready" ? p : undefined
-+                  })()}
-+                  fallback={<div style={avatarFallbackStyle}>?</div>}
-+                  keyed
-+                >
-+                  {(ready) => (
-+                    <Show
-+                      when={ready.avatar}
-+                      fallback={<div style={avatarFallbackStyle}>{avatarInitial(ready.username)}</div>}
-+                    >
-+                      <img src={ready.avatar} alt="头像" style={avatarStyle} />
-+                    </Show>
-+                  )}
-+                </Show>
-+                <span style={usernameStyle}>
-+                  <Show
-+                    when={(() => {
-+                      const p = activeProfile()
-+                      return p && p.status === "ready" ? p.username : ""
-+                    })()}
-+                    fallback="当前账户"
-+                    keyed
-+                  >
-+                    {(name) => <>{name}</>}
-+                  </Show>
-+                </span>
-+                <button
-+                  type="button"
-+                  style={refreshButtonStyle}
-+                  disabled={anyLoading()}
-+                  aria-disabled={anyLoading()}
-+                  onClick={refreshAll}
-+                >
-+                  {anyLoading() ? "刷新中…" : "一键刷新"}
-+                </button>
-+              </div>
-+
-+              <Switch>
-+                <Match when={(activeProfile()?.status ?? "loading") === "loading"}>
-+                  <div style={cardStateStyle}>正在获取账户额度…</div>
-+                </Match>
-+
-+                <Match when={activeProfile() as Extract<KeyProfileState, { status: "error" }>} keyed>
-+                  {(err) => <div style={cardStateStyle}>获取失败：{err.message}</div>}
-+                </Match>
-+
-+                <Match when={activeProfile() as Extract<KeyProfileState, { status: "ready" }>} keyed>
-+                  {(ready) => (
-+                    <>
-+                      <div style={summaryRowStyle}>
-+                        <span style={summaryLabelStyle}>账户总额度</span>
-+                        <span style={summaryValueStyle}>{formatCurrency(ready.quota)}</span>
++            <div style={columnsStyle}>
++              {/* ── 左：账户卡 ── */}
++              <div style={accountColStyle}>
++                <Switch>
++                  <Match when={(activeProfile()?.status ?? "loading") === "loading"}>
++                    <div style={{ ...donutWrapStyle, background: "var(--track, rgba(255,255,255,0.08))" }}>
++                      <div style={donutHoleStyle} />
++                      <div style={donutInnerStyle}>
++                        <div style={donutLblStyle}>加载中…</div>
 +                      </div>
-+                      <div style={summaryRowStyle}>
-+                        <span style={summaryLabelStyle}>账户已用</span>
-+                        <span style={summaryValueStyle}>
-+                          {formatCurrency(ready.usedQuota)}({usedPercent(ready.usedQuota, ready.quota)}%)
-+                        </span>
++                    </div>
++                  </Match>
++
++                  <Match when={activeProfile() as Extract<KeyProfileState, { status: "error" }>} keyed>
++                    {(err) => (
++                      <div style={{ ...donutWrapStyle, background: "rgba(224,107,107,0.12)" }}>
++                        <div style={donutHoleStyle} />
++                        <div style={donutInnerStyle}>
++                          <div style={donutLblStyle}>获取失败</div>
++                        </div>
 +                      </div>
-+                      <div style={progressTrackStyle}>
++                    )}
++                  </Match>
++
++                  <Match when={activeProfile() as Extract<KeyProfileState, { status: "ready" }>} keyed>
++                    {(ready) => (
++                      <>
++                        {/* 环形图：金色弧段=已用占比，中心=剩余余额 */}
 +                        <div
 +                          style={{
-+                            width: `${usedPercent(ready.usedQuota, ready.quota)}%`,
-+                            height: "100%",
-+                            background: "#3b82f6",
++                            ...donutWrapStyle,
++                            background: `conic-gradient(#d4a24e 0 ${usedPercent(ready.usedQuota, ready.quota)}%, rgba(255,255,255,0.08) ${usedPercent(ready.usedQuota, ready.quota)}% 100%)`,
 +                          }}
-+                        />
-+                      </div>
-+                    </>
-+                  )}
-+                </Match>
-+              </Switch>
-+            </div>
++                        >
++                          <div style={donutHoleStyle} />
++                          <div style={donutInnerStyle}>
++                            <div style={donutBalStyle}>{formatCurrency(Math.max(0, ready.quota - ready.usedQuota))}</div>
++                            <div style={donutLblStyle}>余额 Balance</div>
++                          </div>
++                        </div>
 +
-+            {/* [cx] US-008/US-009: key 卡片列表。点击非激活卡片切换激活；每张可编辑名称/删除。 */}
-+            <div style={sectionTitleStyle}>
-+              <span>Key 列表({keys().length})</span>
-+              <span style={{ "font-size": "11px" }}>点击卡片切换激活</span>
-+            </div>
-+            <For each={keys()}>
-+              {(entry) => (
-+                <KeyCard
-+                  entry={entry}
-+                  state={profiles()[entry.id]}
-+                  switching={switchingId() === entry.id}
-+                  onActivate={(e) => void handleActivate(e)}
-+                  onSaveLabel={(id, label) => void handleSaveLabel(id, label)}
-+                  onRemove={(id) => void handleRemove(id)}
-+                />
-+              )}
-+            </For>
++                        <button
++                          type="button"
++                          style={topupButtonStyle}
++                          disabled={!topupUrl()}
++                          aria-disabled={!topupUrl()}
++                          onClick={() => openTopup(topupUrl())}
++                        >
++                          充值
++                        </button>
++                        <Show when={!topupUrl()}>
++                          <div style={hintStyle}>未配置充值地址</div>
++                        </Show>
 +
-+            {/* [cx] US-009: 新增 key 表单。 */}
-+            <AddKeyForm onAdd={handleAdd} />
++                        <div style={usageBoxStyle}>
++                          <div style={{ ...summaryLabelStyle, "margin-bottom": "12px", "letter-spacing": "0.5px" }}>
++                            用量 Usage
++                          </div>
++                          <div style={usageRowStyle}>
++                            <span>今日消耗</span>
++                            <span style={usageValStyle}>
++                              {ready.usedToday === null ? "—" : formatCurrency(ready.usedToday)}
++                            </span>
++                          </div>
++                          <div style={usageRowStyle}>
++                            <span>账户总额</span>
++                            <span style={usageValStyle}>{formatCurrency(ready.quota)}</span>
++                          </div>
++                          <div style={usageRowStyle}>
++                            <span>已用</span>
++                            <span style={usageValStyle}>{formatCurrency(ready.usedQuota)}</span>
++                          </div>
++                          <div style={usageRowStyle}>
++                            <span>使用率</span>
++                            <span style={usageValStyle}>{usedPercent(ready.usedQuota, ready.quota)}%</span>
++                          </div>
++                        </div>
++                      </>
++                    )}
++                  </Match>
++                </Switch>
++              </div>
++
++              {/* ── 右：key 列表 ── */}
++              <div style={{ display: "flex", "flex-direction": "column", "min-width": "0", flex: "1" }}>
++                <div style={sectionTitleStyle}>
++                  <span style={{ "font-size": "14px", color: "#ece7dd", "font-weight": "600" }}>
++                    Key 列表 <span style={{ color: "#d4a24e" }}>· {keys().length}</span>
++                  </span>
++                  <span style={{ display: "flex", "align-items": "center", gap: "12px" }}>
++                    <button
++                      type="button"
++                      style={refreshButtonStyle}
++                      disabled={anyLoading()}
++                      aria-disabled={anyLoading()}
++                      onClick={refreshAll}
++                    >
++                      {anyLoading() ? "刷新中…" : "刷新"}
++                    </button>
++                    <span style={{ "font-size": "12px", color: "#847b6e" }}>点击卡片切换激活</span>
++                  </span>
++                </div>
++                <div style={keyListScrollStyle}>
++                  <For each={keys()}>
++                    {(entry) => (
++                      <KeyCard
++                        entry={entry}
++                        state={profiles()[entry.id]}
++                        switching={switchingId() === entry.id}
++                        onActivate={(e) => void handleActivate(e)}
++                        onSaveLabel={(id, label) => void handleSaveLabel(id, label)}
++                        onRemove={(id) => void handleRemove(id)}
++                      />
++                    )}
++                  </For>
++                  <AddKeyForm onAdd={handleAdd} />
++                </div>
++              </div>
++            </div>
 +          </Match>
 +        </Switch>
-+
-+        {/* [cx] US-007: 充值入口。点击经 window.api.openLink 在系统默认浏览器打开充值页面。
-+            URL 已配置时按钮可点;未配置(注入变量与站点根都缺失)时禁用并提示。 */}
-+        <button
-+          type="button"
-+          style={topupButtonStyle}
-+          disabled={!topupUrl()}
-+          aria-disabled={!topupUrl()}
-+          onClick={() => openTopup(topupUrl())}
-+        >
-+          充值
-+        </button>
-+
-+        <Show when={!topupUrl()}>
-+          <div style={hintStyle}>未配置充值地址,请注入 NEWAPI_TOPUP_URL 或 NEWAPI_BASE_URL</div>
-+        </Show>
 +      </div>
 +    </div>
-+  )
++    )
 +}
 +
 +// 独立入口 + 面板容器。挂载在聊天界面之外,自管理开合状态,不与聊天 UI 共享任何上下文。
