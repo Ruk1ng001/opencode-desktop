@@ -1,0 +1,38 @@
+# 08-self-update-prerelease —— 放行 prerelease，让 cx 自更新能选中 -cx.N 版本
+#
+# 职责：把 updater.ts 的 autoUpdater.allowPrerelease 从 false 改为 true。
+#
+# 为什么必须开：
+#   cx 版本号是 <opencode版本>-cx.N，semver 里 -cx.N 属 prerelease 记法。
+#   allowPrerelease=false 时 electron-updater 走 GitHub /releases/latest，而 GitHub 把带 -
+#   后缀的 release 判为 pre-release、排除在 Latest 之外 → 更新器永远查不到 cx 版本。
+#   开启后走 atom-feed 分支：按当前版本的 prerelease 分量 "cx" 匹配 release 的 -cx.N，正确选中
+#   最新版（首次会探一次 cx*.yml 得 404，随后 fallback 到 electron-builder 实际生成的 latest*.yml，
+#   功能正常，仅一次多余请求）。
+#
+# 配套（非本补丁，在父仓库）：
+#   - brand/electron-builder.brand.ts：publish 源改到本仓库 Ruk1ng001/opencode-desktop；
+#     mac target 加回 zip（macOS 自更新载体，dmg 不能用于更新）。
+#   - .github/workflows/release.yml：build 前注入 cx 版本号到 package.json（否则产物恒为 1.17.15、
+#     自更新永远「已是最新」）；上传 latest*.yml 并合并 mac 双架构（finalize-latest-yml.ts）。
+#
+# 依赖：独立文件（updater.ts），不与 01-07 共享，按 NN 序在最后应用即可。
+# 应用（在 opencode/ 内，基线为 brand/BASE_SHA）：
+#   git -C opencode apply brand/patches/08-self-update-prerelease.patch
+diff --git a/packages/desktop/src/main/updater.ts b/packages/desktop/src/main/updater.ts
+index cd483ed72..d4d9e21af 100644
+--- a/packages/desktop/src/main/updater.ts
++++ b/packages/desktop/src/main/updater.ts
+@@ -13,7 +13,11 @@ export function setupAutoUpdater(stop: () => Promise<void>) {
+   const logger = getLogger()
+   autoUpdater.logger = logger
+   autoUpdater.channel = "latest"
+-  autoUpdater.allowPrerelease = false
++  // [cx] cx 版本号是 <opencode版本>-cx.N（semver 里 -cx.N 属 prerelease）。必须放行 prerelease，
++  // 否则 electron-updater 走 /releases/latest（GitHub 把带 - 后缀的 release 排除在 Latest 外）
++  // → 永远查不到 cx 版本。开启后走 atom-feed 分支，按当前版本的 prerelease 分量 "cx" 匹配
++  // release 的 -cx.N，正确选中最新版（会先探一次 cx*.yml 404 再 fallback 到 latest*.yml，功能正常）。
++  autoUpdater.allowPrerelease = true
+   autoUpdater.allowDowngrade = true
+   autoUpdater.autoDownload = false
+   autoUpdater.autoInstallOnAppQuit = false

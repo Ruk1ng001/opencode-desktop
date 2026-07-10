@@ -41,6 +41,11 @@ const config: Configuration = {
   ...base,
   appId: brandedAppId,
   productName: brandedProductName,
+  // [cx] 自动更新源指向本仓库（覆盖 base 的官方 anomalyco/opencode）。这份 publish 会打进产物的
+  // app-update.yml，决定 electron-updater 去哪查更新；channel:"latest" 与 updater.ts 的
+  // autoUpdater.channel="latest" 对齐（生成/查找 latest*.yml）。CI 打包 --publish never（只出产物 +
+  // dist 里的 latest*.yml），发布仍由 release job 手动 gh release + 合并上传 yml 完成。
+  publish: { provider: "github", owner: "Ruk1ng001", repo: "opencode-desktop", channel: "latest" },
   // 由 appId 派生的 Linux 桌面身份需同步覆盖，否则窗口类 / 启动器与新 appId 不一致。
   extraMetadata: {
     ...base.extraMetadata,
@@ -49,14 +54,14 @@ const config: Configuration = {
   mac: {
     ...base.mac,
     icon: path.join(iconsDir, "icon.icns"),
-    // 验收标准要求产物是 .dmg；上游 mac target 还含 zip（用于自动更新）。
-    // 只保留 dmg，聚焦验收产物、减少无凭据下的失败面。
+    // dmg = 人工下载安装；zip = electron-updater 自更新载体（macOS 只能用 zip 更新、不能用 dmg，
+    // 且只出 dmg 时不会生成可用于更新的 latest-mac.yml）。故两者都出。
     // 架构不在此写死：@lydell/node-pty 按平台拆成独立子包，靠 optionalDependencies
     // 只装「当前 runner 架构」那一个。若在单台 arm64 runner 上跨架构出 x64 包，
     // 打进去的仍是 arm64 的 pty.node，运行时找 darwin-x64/pty.node 会崩。
     // 故 CI 用两个原生 runner（Intel + Apple Silicon）各自 --x64 / --arm64 出包，
-    // 这里只保留 target，架构由命令行 --x64 / --arm64 指定，各出各的独立 dmg。
-    target: ["dmg"],
+    // 这里只保留 target，架构由命令行 --x64 / --arm64 指定，各出各的独立 dmg + zip。
+    target: ["dmg", "zip"],
     // 无凭据降级：关公证 + 不签名 + 关 hardenedRuntime（hardenedRuntime 需签名配套）。
     ...(unsigned ? { notarize: false, hardenedRuntime: false, identity: null } : {}),
   },

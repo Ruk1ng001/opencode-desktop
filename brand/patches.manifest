@@ -165,3 +165,12 @@ packages/desktop/src/main/index.ts
 packages/app/src/pages/directory-layout.tsx
 packages/app/src/pages/layout.tsx
 packages/app/src/pages/layout/sidebar-shell.tsx
+
+#
+# [08-self-update-prerelease] 放行 prerelease，让 cx 自更新能选中 -cx.N 版本。
+#   updater.ts 的 allowPrerelease=false → true。cx 版本号 -cx.N 属 semver prerelease，不开则
+#   electron-updater 走 /releases/latest（GitHub 排除带 - 的 release）永远查不到；开后走 atom feed
+#   按 "cx" 分量匹配。配套（父仓库，非补丁）：brand publish 源改本仓库 + mac 加 zip；release.yml
+#   注入版本号 + 上传/合并 latest*.yml。
+[08-self-update-prerelease]
+packages/desktop/src/main/updater.ts
