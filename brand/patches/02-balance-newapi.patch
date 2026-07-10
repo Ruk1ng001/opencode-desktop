@@ -1,16 +1,21 @@
 diff --git a/packages/desktop/electron.vite.config.ts b/packages/desktop/electron.vite.config.ts
-index 5d25be209..8a24b20db 100644
+index 5d25be209..6a311bf04 100644
 --- a/packages/desktop/electron.vite.config.ts
 +++ b/packages/desktop/electron.vite.config.ts
-@@ -14,6 +14,16 @@ const channel = (() => {
+@@ -14,6 +14,21 @@ const channel = (() => {
  
  const nodePtyPkg = `@lydell/node-pty-${process.platform}-${process.arch}`
  
++// [cx] 内置默认渠道地址：未配置 NEWAPI_BASE_URL 时（如未设 CI Secret），回退到内置中转站。
++// 必须带 /v1（OpenAI 兼容路径）：openai-compatible SDK 以 <base>/chat/completions 发请求，
++// 模型查询走 <base>/models（见 balance-panel 的 deriveModelsUrl）。配了 Secret 则以 Secret 为准。
++const DEFAULT_NEWAPI_BASE_URL = "https://api.997269.xyz/v1"
++
 +// [cx] US-006: 把 US-003 注入的同名渠道变量在构建期喂给 renderer（浏览器上下文读不到
-+// process.env）。缺失即空串，余额面板会据此显示「未配置凭据」态。凭据仅内联到打包产物，
-+// 与上游 OPENCODE_CHANNEL / VITE_SENTRY_* 的 define 注入方式一致，不改动源码取值逻辑。
++// process.env）。baseURL 缺失回退内置默认；key 缺失即空串，余额面板据此显示「未配置凭据」态。
++// 凭据仅内联到打包产物，与上游 OPENCODE_CHANNEL / VITE_SENTRY_* 的 define 注入方式一致。
 +const newapiDefine = {
-+  "import.meta.env.NEWAPI_BASE_URL": JSON.stringify(process.env.NEWAPI_BASE_URL ?? ""),
++  "import.meta.env.NEWAPI_BASE_URL": JSON.stringify(process.env.NEWAPI_BASE_URL || DEFAULT_NEWAPI_BASE_URL),
 +  "import.meta.env.NEWAPI_API_KEY": JSON.stringify(process.env.NEWAPI_API_KEY ?? ""),
 +  // [cx] US-007: 充值页面 URL。缺省时余额面板回退到由 NEWAPI_BASE_URL 推导的站点根。
 +  "import.meta.env.NEWAPI_TOPUP_URL": JSON.stringify(process.env.NEWAPI_TOPUP_URL ?? ""),
@@ -19,7 +24,7 @@ index 5d25be209..8a24b20db 100644
  const sentry =
    process.env.SENTRY_AUTH_TOKEN && process.env.SENTRY_ORG && process.env.SENTRY_PROJECT
      ? sentryVitePlugin({
-@@ -91,6 +101,10 @@ const require = __cjs_mod__.createRequire(import.meta.url);
+@@ -91,6 +106,10 @@ const require = __cjs_mod__.createRequire(import.meta.url);
      },
    },
    renderer: {

@@ -23,10 +23,10 @@
 # 应用(在 opencode/ 内,基线为 brand/BASE_SHA,按 01→02→03→04 顺序):
 #   git -C opencode apply --3way brand/patches/03-lock-channel.patch
 diff --git a/packages/desktop/electron.vite.config.ts b/packages/desktop/electron.vite.config.ts
-index 8a24b20db..c01a5e12c 100644
+index 6a311bf04..24e08e8fc 100644
 --- a/packages/desktop/electron.vite.config.ts
 +++ b/packages/desktop/electron.vite.config.ts
-@@ -45,6 +45,13 @@ export default defineConfig({
+@@ -50,6 +50,14 @@ export default defineConfig({
    main: {
      define: {
        "import.meta.env.OPENCODE_CHANNEL": JSON.stringify(channel),
@@ -34,7 +34,8 @@ index 8a24b20db..c01a5e12c 100644
 +      // 无这些环境变量），故与 renderer 同款在构建期内联。server.ts 据此构造
 +      // OPENCODE_CONFIG_CONTENT 注入内核 sidecar，使 App 默认走内置渠道。三者缺失即空串，
 +      // server.ts 会跳过注入、退回 opencode 原生行为（不破坏 dev）。
-+      "import.meta.env.NEWAPI_BASE_URL": JSON.stringify(process.env.NEWAPI_BASE_URL ?? ""),
++      // baseURL 缺失回退内置默认（DEFAULT_NEWAPI_BASE_URL，带 /v1）；key / model 缺失即空串。
++      "import.meta.env.NEWAPI_BASE_URL": JSON.stringify(process.env.NEWAPI_BASE_URL || DEFAULT_NEWAPI_BASE_URL),
 +      "import.meta.env.NEWAPI_API_KEY": JSON.stringify(process.env.NEWAPI_API_KEY ?? ""),
 +      "import.meta.env.NEWAPI_MODEL": JSON.stringify(process.env.NEWAPI_MODEL ?? ""),
      },
