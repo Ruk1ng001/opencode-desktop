@@ -52,15 +52,15 @@ index 77c120e57..eff51d9cf 100644
  export type ProjectDirString = Schema.Schema.Type<typeof ProjectDirString>
  
 diff --git a/packages/app/src/pages/layout.tsx b/packages/app/src/pages/layout.tsx
-index fd9d16b90..e65471da3 100644
+index fd9d16b90..85ab965f9 100644
 --- a/packages/app/src/pages/layout.tsx
 +++ b/packages/app/src/pages/layout.tsx
 @@ -1256,6 +1256,22 @@ export default function LegacyLayout(props: ParentProps) {
    }
  
    const handleDeepLinks = (urls: string[]) => {
-+    // [cx] US-013: cx:// 一键导入深链。放在 server.isLocal() guard 之前——导入 key 与本地
-+    // server 无关，任何 server 环境都应响应。解析出第一条有效 cx:// 后弹导入确认框（不静默写入，
++    // [cx] US-013: dokng:// 一键导入深链。放在 server.isLocal() guard 之前——导入 key 与本地
++    // server 无关，任何 server 环境都应响应。解析出第一条有效 dokng:// 后弹导入确认框（不静默写入，
 +    // 见 cx-account-import）；面板/确认框依赖 desktop preload 的 window.api，故仅桌面端处理。
 +    if (platform.platform === "desktop") {
 +      void import("@/components/cx-account/cx-account-api").then((api) => {
@@ -99,10 +99,13 @@ index fd9d16b90..e65471da3 100644
    })
  
    async function renameProject(project: LocalProject, next: string) {
-@@ -2239,6 +2269,29 @@ export default function LegacyLayout(props: ParentProps) {
+@@ -2238,7 +2268,31 @@ export default function LegacyLayout(props: ParentProps) {
+       settingsKeybind={() => command.keybind("settings.open")}
        onOpenSettings={openSettings}
        helpLabel={() => language.t("sidebar.help")}
-       onOpenHelp={() => platform.openLink("https://opencode.ai/desktop-feedback")}
+-      onOpenHelp={() => platform.openLink("https://opencode.ai/desktop-feedback")}
++      // [cx] 问号帮助入口改跳品牌站点（Dokng），替换上游 opencode 反馈页。
++      onOpenHelp={() => platform.openLink("https://api.997269.xyz/")}
 +      renderAccountButton={
 +        // [cx] 桌面端账户入口：挂在侧边栏底部（settings / help 同排），点击用同作用域的
 +        // useDialog() 直接弹出账户面板（面板已迁入 app 包，见 cx-account/）。动态 import

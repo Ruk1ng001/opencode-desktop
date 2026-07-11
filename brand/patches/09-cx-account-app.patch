@@ -1,15 +1,15 @@
 diff --git a/packages/app/src/components/cx-account/cx-account-api.ts b/packages/app/src/components/cx-account/cx-account-api.ts
 new file mode 100644
-index 000000000..83c62cc63
+index 000000000..4fcd3091e
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-account-api.ts
-@@ -0,0 +1,396 @@
+@@ -0,0 +1,418 @@
 +// [cx] 账户面板数据层（迁自 desktop 包 renderer/balance/balance-panel.tsx，US-005 → US-013）。
 +//
 +// 纯数据层：零 UI import（不 import solid-js / 上游组件），可离线 typecheck。承载：
 +//   - new-api 只读接口对接：profile（GET /api/app/profile，Bearer sk-）/ models（/v1/models）；
 +//   - 本地 key 列表读取与解析（经 desktop preload 暴露的 window.api.channelKeys*）；
-+//   - cx:// 深链解析（parseImportDeepLink）；
++//   - dokng:// 深链解析（parseImportDeepLink）；
 +//   - providerID 派生（channelProviderId，须与主进程 server.ts / store-channel-keys.ts 完全一致）；
 +//   - 单位换算 / 打码 / 使用率等纯函数。
 +//
@@ -157,6 +157,9 @@ index 000000000..83c62cc63
 +  tokenUsed: number
 +  tokenUsedToday: number
 +  unlimited: boolean
++  // [cx] 该 key 在 new-api 侧的 token 名称（token.Name）。新增 key 未填名称时用它作为本地
++  // label 的一次性来源（后续不再与远端同步）。可能为空串（未命名 token）。
++  tokenName: string
 +}
 +
 +// [cx] US-006: /api/app/profile 响应信封（见 brand/docs/api-app-profile.md 第 3 节）。字段全部
@@ -170,6 +173,7 @@ index 000000000..83c62cc63
 +  quota?: number
 +  used_quota?: number
 +  used_today?: number
++  token_name?: string
 +  token_remain?: number
 +  token_used?: number
 +  token_used_today?: number
@@ -180,6 +184,7 @@ index 000000000..83c62cc63
 +    quota?: number
 +    used_quota?: number
 +    used_today?: number
++    token_name?: string
 +    token_remain?: number
 +    token_used?: number
 +    token_used_today?: number
@@ -320,6 +325,7 @@ index 000000000..83c62cc63
 +      tokenUsed: p.token_used ?? 0,
 +      tokenUsedToday: p.token_used_today ?? 0,
 +      unlimited: p.unlimited ?? false,
++      tokenName: typeof p.token_name === "string" ? p.token_name : "",
 +    }
 +  } catch (error) {
 +    return {
@@ -327,6 +333,15 @@ index 000000000..83c62cc63
 +      message: error instanceof Error ? error.message : "网络请求失败",
 +    }
 +  }
++}
++
++// [cx] 新增 key 未填名称时，用该 key 在 new-api 侧的 token 名称（token.Name，经 /api/app/profile
++// 的 token_name 返回）作为本地 label 的一次性来源。拉取失败 / 名称为空时返回空串——调用方据此
++// 决定回退（如「未命名 key」）。此处只在新增那一刻取一次，后续本地 label 不再与远端同步。
++export async function fetchTokenName(baseURL: string, apiKey: string): Promise<string> {
++  const profile = await fetchProfileWith(baseURL, apiKey)
++  if (profile.status !== "ready") return ""
++  return profile.tokenName.trim()
 +}
 +
 +// [cx] US-009: 拉取某 key 的可用模型列表（OpenAI 兼容 /v1/models，Bearer sk-）。返回模型 id
@@ -357,19 +372,19 @@ index 000000000..83c62cc63
 +}
 +
 +// ============================================================================
-+// [cx] US-013: cx:// 深链一键导入解析
++// [cx] US-013: dokng:// 深链一键导入解析
 +//
-+// 深链格式（约定）：cx://import-key?key=sk-xxx&label=我的渠道&baseURL=https://host/v1
++// 深链格式（约定）：dokng://import-key?key=sk-xxx&label=我的渠道&baseURL=https://host/v1
 +//   - key（必填）：new-api 的 API Token（sk-…）。校验非空。
 +//   - label（可选）：展示名。
 +//   - baseURL（可选）：渠道地址，缺省用内置地址。校验须为可解析 http(s)，否则丢弃回退内置。
-+// host 兼容 import-key / 空 host（cx://?key=…）两种写法。
++// host 兼容 import-key / 空 host（dokng://?key=…）两种写法。
 +//
 +// 安全（US-013 验收 #3）：解析成功不静默写入，由调用方弹确认框展示 label / 打码 key / baseURL，
 +// 用户确认后才 channelKeysAdd 写入，避免恶意深链偷偷灌 key。
 +// ============================================================================
 +
-+// [cx] US-013: 从单条 cx:// URL 解析导入请求。校验：cx: 协议 + key 非空。baseURL 若提供须为
++// [cx] US-013: 从单条 dokng:// URL 解析导入请求。校验：dokng: 协议 + key 非空。baseURL 若提供须为
 +// 可解析 http(s)，否则丢弃该字段（回退内置）而非整体失败。解析失败返回 null，不抛出。
 +export function parseImportDeepLink(raw: string): ImportRequest | null {
 +  if (typeof raw !== "string" || !raw.trim()) return null
@@ -379,7 +394,7 @@ index 000000000..83c62cc63
 +  } catch {
 +    return null
 +  }
-+  if (url.protocol !== "cx:") return null
++  if (url.protocol !== "dokng:") return null
 +  const params = url.searchParams
 +  const key = (params.get("key") ?? "").trim()
 +  if (!key) return null
@@ -400,12 +415,19 @@ index 000000000..83c62cc63
 +export function importDisplayBase(request: ImportRequest): string {
 +  return request.baseURL || cxEnv().NEWAPI_BASE_URL || "内置渠道地址"
 +}
++
++// [cx] 导入请求的「有效渠道地址」——用于向 new-api 发请求（取 token 名称等）。与
++// importDisplayBase 不同，这里不带「内置渠道地址」文案兜底：空则回退构建期内置 NEWAPI_BASE_URL，
++// 仍为空时返回空串（调用方 fetch 会因缺 baseURL 直接返回空/错误，不抛出）。
++export function importEffectiveBaseURL(request: ImportRequest): string {
++  return request.baseURL || cxEnv().NEWAPI_BASE_URL
++}
 diff --git a/packages/app/src/components/cx-account/cx-account-dialog.tsx b/packages/app/src/components/cx-account/cx-account-dialog.tsx
 new file mode 100644
-index 000000000..c28dc5798
+index 000000000..1f5048f26
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-account-dialog.tsx
-@@ -0,0 +1,571 @@
+@@ -0,0 +1,619 @@
 +// [cx] 账户面板（迁自 desktop 包 renderer/balance/balance-panel.tsx，US-005 → US-013）。
 +//
 +// 本文件是账户面板从 desktop 包迁入 @opencode-ai/app 包的落地：改用原生 v2 组件
@@ -414,7 +436,7 @@ index 000000000..c28dc5798
 +// 不再自绘悬浮层 / 不再硬编码颜色（旧 desktop 面板 84 处硬编码金色内联样式已全部退役）。
 +//
 +// 数据层在 cx-account-api.ts（纯函数 + new-api 请求 + 本地 key 列表 + 跨包 window.api 桥接）。
-+// 接线（侧边栏账户按钮 dialog.show、cx:// 深链）在 07 补丁的 layout.tsx；本文件只导出面板组件。
++// 接线（侧边栏账户按钮 dialog.show、dokng:// 深链）在 07 补丁的 layout.tsx；本文件只导出面板组件。
 +//
 +// 低冲突：独立目录 packages/app/src/components/cx-account/，全部 Cx 前缀，对上游现有文件零改动。
 +
@@ -430,6 +452,7 @@ index 000000000..c28dc5798
 +  channelProviderId,
 +  fetchModelsWith,
 +  fetchProfileWith,
++  fetchTokenName,
 +  formatCurrency,
 +  keyUsedPercent,
 +  loadChannelState,
@@ -750,6 +773,8 @@ index 000000000..c28dc5798
 +  })
 +
 +  // [cx] 新增 key —— 写入本地列表 → 主进程拉模型 + 热重载（provider 出现），不重启进程。
++  // [cx] 未填名称时：新增后用该 key 在 new-api 侧的 token 名称（/api/app/profile 的 token_name）
++  // 一次性回填本地 label（后续不再与远端同步）；取名失败 / 远端也没名字时保持「未命名 key」占位。
 +  async function handleAdd(input: { label: string; key: string; baseURL: string }): Promise<void> {
 +    let addedId: string | undefined
 +    try {
@@ -762,6 +787,24 @@ index 000000000..c28dc5798
 +      // 主进程写库正常不抛；即便异常也不应让面板崩溃。
 +    }
 +    await reload()
++
++    // [cx] 未填名称 → 从远端取 token 名称回填 label（仅一次）。用 reload 后已解析出有效
++    // baseURL 的条目发起查询（表单里 baseURL 固定空串，回退构建期内置地址在此已解析）。
++    if (addedId && !input.label.trim()) {
++      const entry = keys().find((k) => k.id === addedId)
++      if (entry) {
++        const remoteName = await fetchTokenName(entry.baseURL, entry.key)
++        if (remoteName) {
++          try {
++            await cxChannelApi()?.channelKeysUpdateLabel?.(addedId, remoteName)
++          } catch {
++            // 回填失败不阻断：卡片仍显示「未命名 key」占位，可手动改名。
++          }
++          await reload()
++        }
++      }
++    }
++
 +    if (addedId) {
 +      try {
 +        await cxChannelApi()?.channelConfigRefreshKey?.(addedId)
@@ -883,6 +926,17 @@ index 000000000..c28dc5798
 +                  <Match when={activeProfile() as Extract<KeyProfileState, { status: "ready" }>} keyed>
 +                    {(ready) => (
 +                      <>
++                        {/* [cx] 账户头：头像 + 用户名（对齐参考布局左栏顶部）。 */}
++                        <div data-slot="cx-account-head">
++                          <Show
++                            when={ready.avatar}
++                            fallback={<div data-slot="cx-account-avatar-fallback">{avatarInitial(ready.username)}</div>}
++                          >
++                            <img src={ready.avatar} alt="头像" data-slot="cx-account-avatar" />
++                          </Show>
++                          <div data-slot="cx-account-name">{ready.username || "未命名用户"}</div>
++                        </div>
++
 +                        {/* 环形图：accent 弧段=已用占比，中心=剩余余额。 */}
 +                        <div data-slot="cx-donut">
 +                          <ProgressCircleV2
@@ -935,6 +989,22 @@ index 000000000..c28dc5798
 +                            </div>
 +                          </Show>
 +                        </div>
++
++                        {/* [cx] 底部「前往 Dokng 查看更多」链接（对齐参考布局左栏底部）。打开由激活
++                            key 的 baseURL 推导的 new-api 站点根（同充值地址来源），缺失则不渲染。 */}
++                        <Show when={topupUrl()}>
++                          <div
++                            data-slot="cx-site-link"
++                            role="link"
++                            tabindex="0"
++                            onClick={() => openTopup(topupUrl())}
++                            onKeyDown={(e) => {
++                              if (e.key === "Enter" || e.key === " ") openTopup(topupUrl())
++                            }}
++                          >
++                            前往 Dokng 查看更多 →
++                          </div>
++                        </Show>
 +                      </>
 +                    )}
 +                  </Match>
@@ -979,14 +1049,14 @@ index 000000000..c28dc5798
 +}
 diff --git a/packages/app/src/components/cx-account/cx-account-import.tsx b/packages/app/src/components/cx-account/cx-account-import.tsx
 new file mode 100644
-index 000000000..393eff993
+index 000000000..2658579ac
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-account-import.tsx
-@@ -0,0 +1,148 @@
-+// [cx] US-013: cx:// 深链一键导入确认框（迁自 desktop 包 balance-panel.tsx 的 ImportDialog）。
+@@ -0,0 +1,170 @@
++// [cx] US-013: dokng:// 深链一键导入确认框（迁自 desktop 包 balance-panel.tsx 的 ImportDialog）。
 +//
-+// 网站点击「一键导入」→ 系统唤起 App（cx:// 协议，06 补丁在主进程注册）→ opencode 既有 deep-link
-+// 分发把 URL 送到渲染层 → 07 补丁的 layout.tsx handleDeepLinks 解析出 cx:// 后动态 import 本组件
++// 网站点击「一键导入」→ 系统唤起 App（dokng:// 协议，06 补丁在主进程注册）→ opencode 既有 deep-link
++// 分发把 URL 送到渲染层 → 07 补丁的 layout.tsx handleDeepLinks 解析出 dokng:// 后动态 import 本组件
 +// 弹确认框。安全（US-013 验收 #3）：解析成功不静默写入，先展示 label / 打码 key / baseURL，
 +// 用户确认后才 channelKeysAdd 写入本地列表，避免恶意深链偷偷灌 key。
 +//
@@ -1000,7 +1070,14 @@ index 000000000..393eff993
 +import { Dialog, DialogBody, DialogHeader, DialogTitle } from "@opencode-ai/ui/v2/dialog-v2"
 +import { ButtonV2 } from "@opencode-ai/ui/v2/button-v2"
 +import "./cx-account.css"
-+import { cxChannelApi, importDisplayBase, maskKey, type ImportRequest } from "./cx-account-api"
++import {
++  cxChannelApi,
++  fetchTokenName,
++  importDisplayBase,
++  importEffectiveBaseURL,
++  maskKey,
++  type ImportRequest,
++} from "./cx-account-api"
 +
 +// [cx] US-013: 导入确认框内容。展示待导入信息 → 确认写入 → 可选「设为激活」。
 +// 用同作用域 useDialog().close() 自闭合（写入 / 取消 / 完成后关闭）。
@@ -1028,7 +1105,22 @@ index 000000000..393eff993
 +      const list = Array.isArray(state.keys) ? state.keys : []
 +      // 新增条目排在末尾；按明文 key 匹配取回 id（key 仅内存比对，不外传）。
 +      const added = [...list].reverse().find((k) => k.key === props.request.key)
-+      setPhase({ status: "done", id: added?.id ?? "" })
++      const addedId = added?.id ?? ""
++
++      // [cx] 深链未带 label 时：用该 key 在 new-api 侧的 token 名称（/api/app/profile 的
++      // token_name）一次性回填本地 label（后续不再与远端同步）。失败 / 远端也无名称则保持占位。
++      if (addedId && !props.request.label.trim()) {
++        const remoteName = await fetchTokenName(importEffectiveBaseURL(props.request), props.request.key)
++        if (remoteName) {
++          try {
++            await cxChannelApi()?.channelKeysUpdateLabel?.(addedId, remoteName)
++          } catch {
++            // 回填失败不阻断：卡片显示「未命名 key」占位，可手动改名。
++          }
++        }
++      }
++
++      setPhase({ status: "done", id: addedId })
 +    } catch {
 +      setPhase({ status: "error", message: "导入失败，请重试或手动在账户面板添加。" })
 +    }
@@ -1133,10 +1225,10 @@ index 000000000..393eff993
 +export { CxDialogImport }
 diff --git a/packages/app/src/components/cx-account/cx-account.css b/packages/app/src/components/cx-account/cx-account.css
 new file mode 100644
-index 000000000..642eeb2a0
+index 000000000..8951bd63d
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-account.css
-@@ -0,0 +1,458 @@
+@@ -0,0 +1,515 @@
 +/* [cx] 账户面板样式 —— 全部走 opencode v2 语义变量（无硬编码颜色），
 + * 自动跟随明暗主题，与原生设置页视觉统一。选择器统一走 TSX 实际渲染的
 + * data-slot 属性（TSX 以 data-slot 命名各区块，仅少量用 class），并全部
@@ -1186,12 +1278,52 @@ index 000000000..642eeb2a0
 +  overflow: hidden;
 +}
 +
++/* ── 账户卡：账户头（头像 + 用户名）+ 环形图 + 充值 + 用量小结 ── */
++.cx-account-body [data-slot="cx-account-head"] {
++  display: flex;
++  flex-direction: column;
++  align-items: center;
++  gap: 8px;
++  padding: 4px 0 12px;
++}
++
++.cx-account-body [data-slot="cx-account-avatar"] {
++  width: 52px;
++  height: 52px;
++  border-radius: 9999px;
++  object-fit: cover;
++  border: 1px solid var(--v2-border-border-muted);
++}
++
++.cx-account-body [data-slot="cx-account-avatar-fallback"] {
++  width: 52px;
++  height: 52px;
++  border-radius: 9999px;
++  display: flex;
++  align-items: center;
++  justify-content: center;
++  background: var(--v2-background-bg-accent);
++  color: var(--v2-text-text-contrast);
++  font-size: 22px;
++  font-weight: 640;
++}
++
++.cx-account-body [data-slot="cx-account-name"] {
++  font-size: 14px;
++  font-weight: 590;
++  color: var(--v2-text-text-base);
++  max-width: 100%;
++  white-space: nowrap;
++  overflow: hidden;
++  text-overflow: ellipsis;
++}
++
 +/* ── 账户卡：环形图 + 充值 + 用量小结 ── */
 +.cx-account-body [data-slot="cx-donut"] {
 +  position: relative;
 +  width: 148px;
 +  height: 148px;
-+  margin: 8px auto 20px;
++  margin: 0 auto 20px;
 +  display: flex;
 +  align-items: center;
 +  justify-content: center;
@@ -1273,6 +1405,23 @@ index 000000000..642eeb2a0
 +  color: var(--v2-text-text-base);
 +  font-weight: 590;
 +  font-variant-numeric: tabular-nums;
++}
++
++/* ── 底部「前往 Dokng 查看更多」链接（对齐参考布局左栏底部）。margin-top:auto 把它推到
++   账户列底部，与右侧 key 列表列等高对齐。 ── */
++.cx-account-body [data-slot="cx-site-link"] {
++  margin-top: auto;
++  padding-top: 20px;
++  font-size: 13px;
++  font-weight: 530;
++  color: var(--v2-text-text-accent);
++  text-align: center;
++  cursor: pointer;
++  user-select: none;
++}
++
++.cx-account-body [data-slot="cx-site-link"]:hover {
++  text-decoration: underline;
 +}
 +
 +/* ── key 列表列 ── */
