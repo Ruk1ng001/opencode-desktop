@@ -437,10 +437,10 @@ index 000000000..7e15bd44a
 +}
 diff --git a/packages/app/src/components/cx-account/cx-account-dialog.tsx b/packages/app/src/components/cx-account/cx-account-dialog.tsx
 new file mode 100644
-index 000000000..6238f0063
+index 000000000..8d34d08c2
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-account-dialog.tsx
-@@ -0,0 +1,723 @@
+@@ -0,0 +1,733 @@
 +// [cx] 账户面板（迁自 desktop 包 renderer/balance/balance-panel.tsx，US-005 → US-013）。
 +//
 +// 本文件是账户面板从 desktop 包迁入 @opencode-ai/app 包的落地：改用原生 v2 组件
@@ -948,7 +948,7 @@ index 000000000..6238f0063
 +  }
 +
 +  return (
-+    <Dialog size="large" fit>
++    <Dialog size="large">
 +      <DialogHeader closeLabel="关闭">
 +        <DialogTitle>账户</DialogTitle>
 +      </DialogHeader>
@@ -1059,8 +1059,8 @@ index 000000000..6238f0063
 +                </div>
 +              </div>
 +
-+              {/* [cx] 账户级摘要（quota / used_quota / used_today）——同账户下所有 key 一致，
-+                  与下方 token / key 级数据严格区分，避免重复。 */}
++              {/* [cx] 账户 + Token 统计合并卡片：账户级（quota / used_quota / used_today，同账户所有
++                  key 一致）与本地已加载 token 汇总放在同一卡片，用分隔线区分两组，避免与下方 key 卡重复。 */}
 +              <Show
 +                when={
 +                  accountProfile()?.status === "ready"
@@ -1070,55 +1070,65 @@ index 000000000..6238f0063
 +                keyed
 +              >
 +                {(ready) => (
-+                  <div data-slot="cx-metrics">
-+                    <div data-slot="cx-metric">
-+                      <span>账户余额</span>
-+                      <strong>
-+                        {ready.unlimited ? "不限额" : formatCurrency(Math.max(0, ready.quota - ready.usedQuota))}
-+                      </strong>
-+                      <small>{ready.unlimited ? "无额度限制" : `总额 ${formatCurrency(ready.quota)}`}</small>
++                  <div data-slot="cx-summary">
++                    <div data-slot="cx-summary-group">
++                      <div data-slot="cx-summary-group-head">
++                        <span data-slot="cx-summary-group-title">账户余额</span>
++                      </div>
++                      <div data-slot="cx-summary-grid">
++                        <div data-slot="cx-summary-item">
++                          <span>可用余额</span>
++                          <strong>
++                            {ready.unlimited ? "不限额" : formatCurrency(Math.max(0, ready.quota - ready.usedQuota))}
++                          </strong>
++                          <small>{ready.unlimited ? "无额度限制" : `总额 ${formatCurrency(ready.quota)}`}</small>
++                        </div>
++                        <div data-slot="cx-summary-item">
++                          <span>今日消耗</span>
++                          <strong>{ready.usedToday === null ? "—" : formatCurrency(ready.usedToday)}</strong>
++                          <small>{ready.usedToday === null ? "接口未提供" : "账户今日用量"}</small>
++                        </div>
++                        <div data-slot="cx-summary-item">
++                          <span>累计消耗</span>
++                          <strong>{formatCurrency(ready.usedQuota)}</strong>
++                          <small>
++                            {ready.unlimited ? "不限额账户" : `已使用 ${usedPercent(ready.usedQuota, ready.quota)}%`}
++                          </small>
++                        </div>
++                      </div>
 +                    </div>
-+                    <div data-slot="cx-metric">
-+                      <span>账户今日消耗</span>
-+                      <strong>{ready.usedToday === null ? "—" : formatCurrency(ready.usedToday)}</strong>
-+                      <small>{ready.usedToday === null ? "接口未提供" : "全部 key 合计"}</small>
-+                    </div>
-+                    <div data-slot="cx-metric">
-+                      <span>账户累计消耗</span>
-+                      <strong>{formatCurrency(ready.usedQuota)}</strong>
-+                      <small>
-+                        {ready.unlimited ? "不限额账户" : `已使用 ${usedPercent(ready.usedQuota, ready.quota)}%`}
-+                      </small>
-+                    </div>
++
++                    {/* [cx] Token 统计：本地已加载 profile 的 token 级字段汇总（非趋势，仅当前快照）。 */}
++                    <Show when={tokenSummary().loaded > 0}>
++                      <div data-slot="cx-summary-group" data-divider="">
++                        <div data-slot="cx-summary-group-head">
++                          <span data-slot="cx-summary-group-title">Token 统计</span>
++                          <span data-slot="cx-summary-group-note">
++                            已载入 {tokenSummary().loaded} / {keys().length} 个 token
++                            <Show when={tokenSummary().unlimited > 0}> · {tokenSummary().unlimited} 个不限额</Show>
++                          </span>
++                        </div>
++                        <div data-slot="cx-summary-grid">
++                          <div data-slot="cx-summary-item">
++                            <span>剩余额度合计</span>
++                            <strong>{formatCurrency(tokenSummary().remaining)}</strong>
++                            <small>全部 token 合计</small>
++                          </div>
++                          <div data-slot="cx-summary-item">
++                            <span>今日 token 消耗</span>
++                            <strong>{formatCurrency(tokenSummary().usedToday)}</strong>
++                            <small>全部 token 合计</small>
++                          </div>
++                          <div data-slot="cx-summary-item">
++                            <span>累计 token 消耗</span>
++                            <strong>{formatCurrency(tokenSummary().used)}</strong>
++                            <small>全部 token 合计</small>
++                          </div>
++                        </div>
++                      </div>
++                    </Show>
 +                  </div>
 +                )}
-+              </Show>
-+
-+              {/* [cx] Token 统计：对本地已加载 profile 的 token 级字段做汇总（非趋势，仅当前快照）。 */}
-+              <Show when={tokenSummary().loaded > 0}>
-+                <div data-slot="cx-token-summary">
-+                  <div data-slot="cx-token-summary-head">
-+                    <span data-slot="cx-token-summary-title">Token 统计</span>
-+                    <span data-slot="cx-token-summary-note">
-+                      已载入 {tokenSummary().loaded} / {keys().length} 个 token
-+                      <Show when={tokenSummary().unlimited > 0}> · {tokenSummary().unlimited} 个不限额</Show>
-+                    </span>
-+                  </div>
-+                  <div data-slot="cx-token-summary-grid">
-+                    <div data-slot="cx-token-summary-item">
-+                      <span>剩余额度合计</span>
-+                      <strong>{formatCurrency(tokenSummary().remaining)}</strong>
-+                    </div>
-+                    <div data-slot="cx-token-summary-item">
-+                      <span>今日 token 消耗</span>
-+                      <strong>{formatCurrency(tokenSummary().usedToday)}</strong>
-+                    </div>
-+                    <div data-slot="cx-token-summary-item">
-+                      <span>累计 token 消耗</span>
-+                      <strong>{formatCurrency(tokenSummary().used)}</strong>
-+                    </div>
-+                  </div>
-+                </div>
 +              </Show>
 +
 +              <Show when={notice()}>
@@ -1345,17 +1355,22 @@ index 000000000..2a4abd208
 +export { CxDialogImport }
 diff --git a/packages/app/src/components/cx-account/cx-account.css b/packages/app/src/components/cx-account/cx-account.css
 new file mode 100644
-index 000000000..85804b43c
+index 000000000..a5bba7cf3
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-account.css
-@@ -0,0 +1,637 @@
+@@ -0,0 +1,601 @@
 +/* [cx] 账户工作台：完全复用 OpenCode v2 语义 token，不引入品牌外配色。 */
 +@import "@opencode-ai/ui/v2/button-v2.css";
 +@import "@opencode-ai/ui/v2/icon-button-v2.css";
 +@import "@opencode-ai/ui/v2/text-input-v2.css";
 +@import "@opencode-ai/ui/v2/tooltip-v2.css";
 +
-+.cx-account-body {
++/* [cx] .cx-account-body 即 dialog-body 本身；用 content 作用域选择器（0,3,0）压过
++   dialog-v2.css 里 [dialog-content] [dialog-body] 的 overflow:hidden（0,2,0），
++   让面板内容在固定高度弹窗内可滚动（Dialog 已去掉 fit 改固定 large 高度）。 */
++[data-slot="dialog-content"] [data-slot="dialog-body"].cx-account-body {
++  flex: 1;
++  min-height: 0;
 +  padding: 0 24px 24px;
 +  overflow-y: auto;
 +  scrollbar-width: none;
@@ -1459,30 +1474,61 @@ index 000000000..85804b43c
 +  gap: 8px;
 +}
 +
-+.cx-account-body [data-slot="cx-metrics"] {
-+  display: grid;
-+  grid-template-columns: repeat(4, minmax(0, 1fr));
++/* [cx] 账户 + Token 统计合并卡片：账户级（quota/used_quota/used_today，同账户所有 key
++   一致）与本地已加载 token 汇总同卡，两组用分隔线区分，避免与下方 key 卡重复。 */
++.cx-account-body [data-slot="cx-summary"] {
 +  overflow: hidden;
 +  border-radius: 8px;
 +  background: var(--v2-background-bg-layer-01);
 +  box-shadow: inset 0 0 0 0.5px var(--v2-border-border-muted);
 +}
 +
-+.cx-account-body [data-slot="cx-metric"] {
++.cx-account-body [data-slot="cx-summary-group"][data-divider] {
++  border-top: 0.5px solid var(--v2-border-border-base);
++}
++
++.cx-account-body [data-slot="cx-summary-group-head"] {
++  display: flex;
++  flex-wrap: wrap;
++  align-items: baseline;
++  justify-content: space-between;
++  gap: 8px;
++  padding: 14px 20px 0;
++}
++
++.cx-account-body [data-slot="cx-summary-group-title"] {
++  color: var(--v2-text-text-base);
++  font-size: 13px;
++  font-weight: 530;
++}
++
++.cx-account-body [data-slot="cx-summary-group-note"] {
++  color: var(--v2-text-text-muted);
++  font-size: 11px;
++  font-variant-numeric: tabular-nums;
++}
++
++.cx-account-body [data-slot="cx-summary-grid"] {
++  display: grid;
++  grid-template-columns: repeat(3, minmax(0, 1fr));
++  padding: 12px 8px 16px;
++}
++
++.cx-account-body [data-slot="cx-summary-item"] {
 +  display: flex;
 +  min-width: 0;
 +  flex-direction: column;
-+  gap: 8px;
-+  padding: 16px 18px;
++  gap: 6px;
++  padding: 4px 12px;
 +  border-right: 0.5px solid var(--v2-border-border-base);
 +}
 +
-+.cx-account-body [data-slot="cx-metric"]:last-child {
++.cx-account-body [data-slot="cx-summary-item"]:last-child {
 +  border-right: 0;
 +}
 +
-+.cx-account-body [data-slot="cx-metric"] > span,
-+.cx-account-body [data-slot="cx-metric"] > small {
++.cx-account-body [data-slot="cx-summary-item"] > span,
++.cx-account-body [data-slot="cx-summary-item"] > small {
 +  overflow: hidden;
 +  color: var(--v2-text-text-muted);
 +  font-size: 11px;
@@ -1492,12 +1538,12 @@ index 000000000..85804b43c
 +  white-space: nowrap;
 +}
 +
-+.cx-account-body [data-slot="cx-metric"] > strong {
++.cx-account-body [data-slot="cx-summary-item"] > strong {
 +  overflow: hidden;
 +  color: var(--v2-text-text-base);
-+  font-size: 20px;
++  font-size: 19px;
 +  font-weight: 640;
-+  line-height: 1;
++  line-height: 1.1;
 +  font-variant-numeric: tabular-nums;
 +  text-overflow: ellipsis;
 +  white-space: nowrap;
@@ -1510,70 +1556,6 @@ index 000000000..85804b43c
 +  background: var(--v2-state-bg-danger);
 +  color: var(--v2-state-fg-danger);
 +  font-size: 12px;
-+}
-+
-+/* [cx] Token 统计区：本地已加载 profile 的 token 级字段汇总（快照，非趋势）。 */
-+.cx-account-body [data-slot="cx-token-summary"] {
-+  overflow: hidden;
-+  border-radius: 8px;
-+  background: var(--v2-background-bg-layer-01);
-+  box-shadow: inset 0 0 0 0.5px var(--v2-border-border-muted);
-+}
-+
-+.cx-account-body [data-slot="cx-token-summary-head"] {
-+  display: flex;
-+  flex-wrap: wrap;
-+  align-items: baseline;
-+  justify-content: space-between;
-+  gap: 8px;
-+  padding: 14px 20px;
-+  border-bottom: 0.5px solid var(--v2-border-border-base);
-+}
-+
-+.cx-account-body [data-slot="cx-token-summary-title"] {
-+  color: var(--v2-text-text-base);
-+  font-size: 13px;
-+  font-weight: 530;
-+}
-+
-+.cx-account-body [data-slot="cx-token-summary-note"] {
-+  color: var(--v2-text-text-muted);
-+  font-size: 11px;
-+  font-variant-numeric: tabular-nums;
-+}
-+
-+.cx-account-body [data-slot="cx-token-summary-grid"] {
-+  display: grid;
-+  grid-template-columns: repeat(3, minmax(0, 1fr));
-+}
-+
-+.cx-account-body [data-slot="cx-token-summary-item"] {
-+  display: flex;
-+  min-width: 0;
-+  flex-direction: column;
-+  gap: 8px;
-+  padding: 14px 20px;
-+  border-right: 0.5px solid var(--v2-border-border-base);
-+}
-+
-+.cx-account-body [data-slot="cx-token-summary-item"]:last-child {
-+  border-right: 0;
-+}
-+
-+.cx-account-body [data-slot="cx-token-summary-item"] > span {
-+  overflow: hidden;
-+  color: var(--v2-text-text-muted);
-+  font-size: 11px;
-+  text-overflow: ellipsis;
-+  white-space: nowrap;
-+}
-+
-+.cx-account-body [data-slot="cx-token-summary-item"] > strong {
-+  color: var(--v2-text-text-base);
-+  font-size: 16px;
-+  font-weight: 640;
-+  line-height: 1;
-+  font-variant-numeric: tabular-nums;
 +}
 +
 +.cx-account-body [data-slot="cx-key-col"] {
@@ -1943,21 +1925,13 @@ index 000000000..85804b43c
 +    display: none;
 +  }
 +
-+  .cx-account-body [data-slot="cx-metrics"] {
++  .cx-account-body [data-slot="cx-summary-grid"] {
 +    grid-template-columns: 1fr;
++    padding: 8px 8px 12px;
 +  }
 +
-+  .cx-account-body [data-slot="cx-metric"] {
++  .cx-account-body [data-slot="cx-summary-item"] {
 +    border-right: 0;
-+    border-bottom: 0.5px solid var(--v2-border-border-base);
-+  }
-+
-+  .cx-account-body [data-slot="cx-metric"]:last-child {
-+    border-bottom: 0;
-+  }
-+
-+  .cx-account-body [data-slot="cx-token-summary-grid"] {
-+    grid-template-columns: 1fr;
 +  }
 +
 +  .cx-account-body [data-slot="cx-key-list"] {
