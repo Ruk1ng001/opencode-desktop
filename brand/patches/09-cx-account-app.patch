@@ -1,6 +1,6 @@
 diff --git a/packages/app/src/components/cx-account/cx-account-api.ts b/packages/app/src/components/cx-account/cx-account-api.ts
 new file mode 100644
-index 000000000..9513d4fd1
+index 000000000..83c62cc63
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-account-api.ts
 @@ -0,0 +1,396 @@
@@ -67,13 +67,13 @@ index 000000000..9513d4fd1
 +// ============================================================================
 +
 +// 从渠道 baseURL（如 https://host/v1）推导 new-api 站点根，用户接口挂在站点根 /api 下。
-+export function deriveApiBase(baseURL: string): string {
++function deriveApiBase(baseURL: string): string {
 +  const trimmed = baseURL.trim().replace(/\/+$/, "")
 +  return trimmed.replace(/\/v1$/, "")
 +}
 +
 +// [cx] US-009: 由渠道 baseURL 推导 OpenAI 兼容 /v1/models 端点。
-+export function deriveModelsUrl(baseURL: string): string {
++function deriveModelsUrl(baseURL: string): string {
 +  const trimmed = baseURL.trim().replace(/\/+$/, "")
 +  if (/\/v1$/.test(trimmed)) return `${trimmed}/models`
 +  return `${trimmed}/v1/models`
@@ -146,7 +146,7 @@ index 000000000..9513d4fd1
 +// ============================================================================
 +
 +// [cx] US-006: profile 就绪态承载的字段。额度类均为 new-api 原始 quota 整数，换算在渲染层做。
-+export type ProfileData = {
++type ProfileData = {
 +  username: string
 +  avatar: string
 +  quota: number
