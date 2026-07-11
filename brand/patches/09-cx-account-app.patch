@@ -1,9 +1,9 @@
 diff --git a/packages/app/src/components/cx-account/cx-account-api.ts b/packages/app/src/components/cx-account/cx-account-api.ts
 new file mode 100644
-index 000000000..4fcd3091e
+index 000000000..7e15bd44a
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-account-api.ts
-@@ -0,0 +1,418 @@
+@@ -0,0 +1,431 @@
 +// [cx] 账户面板数据层（迁自 desktop 包 renderer/balance/balance-panel.tsx，US-005 → US-013）。
 +//
 +// 纯数据层：零 UI import（不 import solid-js / 上游组件），可离线 typecheck。承载：
@@ -82,12 +82,17 @@ index 000000000..4fcd3091e
 +// [cx] US-007/US-010: 解析充值页面 URL。优先注入变量 NEWAPI_TOPUP_URL，缺省回退到「由激活 key
 +// 的 baseURL 推导的站点根」（随激活 key 变化），activeBaseURL 为空再回退构建期 NEWAPI_BASE_URL。
 +// 两者都缺失返回空串（充值入口禁用并提示）。
++export function resolveSiteUrl(activeBaseURL?: string): string {
++  const env = cxEnv()
++  const baseURL = (activeBaseURL ?? "").trim() || env.NEWAPI_BASE_URL
++  return deriveApiBase(baseURL)
++}
++
 +export function resolveTopupUrl(activeBaseURL?: string): string {
 +  const env = cxEnv()
 +  const topup = env.NEWAPI_TOPUP_URL.trim()
 +  if (topup) return topup
-+  const baseURL = (activeBaseURL ?? "").trim() || env.NEWAPI_BASE_URL
-+  return deriveApiBase(baseURL)
++  return resolveSiteUrl(activeBaseURL)
 +}
 +
 +// [cx] US-007: 在系统默认浏览器打开充值页面。renderer 是浏览器上下文，经 preload 暴露的
@@ -285,7 +290,15 @@ index 000000000..4fcd3091e
 +  const apiKey = env.NEWAPI_API_KEY
 +  if (fallbackBase && apiKey) {
 +    return [
-+      { id: "__builtin__", label: "内置渠道", key: apiKey, baseURL: fallbackBase, isActive: true, builtin: true, models: [] },
++      {
++        id: "__builtin__",
++        label: "内置渠道",
++        key: apiKey,
++        baseURL: fallbackBase,
++        isActive: true,
++        builtin: true,
++        models: [],
++      },
 +    ]
 +  }
 +  return []
@@ -424,14 +437,14 @@ index 000000000..4fcd3091e
 +}
 diff --git a/packages/app/src/components/cx-account/cx-account-dialog.tsx b/packages/app/src/components/cx-account/cx-account-dialog.tsx
 new file mode 100644
-index 000000000..1f5048f26
+index 000000000..fe3d9bf3d
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-account-dialog.tsx
-@@ -0,0 +1,619 @@
+@@ -0,0 +1,652 @@
 +// [cx] 账户面板（迁自 desktop 包 renderer/balance/balance-panel.tsx，US-005 → US-013）。
 +//
 +// 本文件是账户面板从 desktop 包迁入 @opencode-ai/app 包的落地：改用原生 v2 组件
-+// （@opencode-ai/ui/v2 的 Dialog / ButtonV2 / TextInputV2 / ProgressCircleV2 / Tag）+
++// （@opencode-ai/ui/v2 的 Dialog / ButtonV2 / TextInputV2 / IconButtonV2 / Tag）+
 +// useDialog() 外壳，配色全走 v2 语义变量（cx-account.css），跟随明暗主题、与原生设置页视觉统一。
 +// 不再自绘悬浮层 / 不再硬编码颜色（旧 desktop 面板 84 处硬编码金色内联样式已全部退役）。
 +//
@@ -444,8 +457,10 @@ index 000000000..1f5048f26
 +import { Dialog, DialogBody, DialogHeader, DialogTitle } from "@opencode-ai/ui/v2/dialog-v2"
 +import { ButtonV2 } from "@opencode-ai/ui/v2/button-v2"
 +import { TextInputV2 } from "@opencode-ai/ui/v2/text-input-v2"
-+import { ProgressCircleV2 } from "@opencode-ai/ui/v2/progress-circle-v2"
 +import { Tag } from "@opencode-ai/ui/v2/badge-v2"
++import { Icon } from "@opencode-ai/ui/v2/icon"
++import { IconButtonV2 } from "@opencode-ai/ui/v2/icon-button-v2"
++import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
 +import "./cx-account.css"
 +import {
 +  avatarInitial,
@@ -459,6 +474,7 @@ index 000000000..1f5048f26
 +  maskKey,
 +  openTopup,
 +  resolveKeyList,
++  resolveSiteUrl,
 +  resolveTopupUrl,
 +  usedPercent,
 +  cxChannelApi,
@@ -539,11 +555,17 @@ index 000000000..1f5048f26
 +          <div data-slot="cx-key-state">加载中…</div>
 +        </Match>
 +
-+        <Match when={state() as Extract<KeyProfileState, { status: "error" }>} keyed>
++        <Match
++          when={state().status === "error" ? (state() as Extract<KeyProfileState, { status: "error" }>) : undefined}
++          keyed
++        >
 +          {(err) => <div data-slot="cx-key-state">获取失败：{err.message}</div>}
 +        </Match>
 +
-+        <Match when={state() as Extract<KeyProfileState, { status: "ready" }>} keyed>
++        <Match
++          when={state().status === "ready" ? (state() as Extract<KeyProfileState, { status: "ready" }>) : undefined}
++          keyed
++        >
 +          {(ready) => (
 +            <>
 +              {/* 该 key 所属账户的头像 + 用户名 + 该 key 余额。 */}
@@ -563,7 +585,10 @@ index 000000000..1f5048f26
 +              {/* per-key 使用率进度条：已用 /（已用 + 剩余）。不限额时无分母意义，改显示标签。 */}
 +              <Show when={!ready.unlimited} fallback={<Tag data-slot="cx-unlimited-tag">该 key 不限额</Tag>}>
 +                <div data-slot="cx-key-bar-track">
-+                  <div data-slot="cx-key-bar-fill" style={{ width: `${keyUsedPercent(ready.tokenUsed, ready.tokenRemain)}%` }} />
++                  <div
++                    data-slot="cx-key-bar-fill"
++                    style={{ width: `${keyUsedPercent(ready.tokenUsed, ready.tokenRemain)}%` }}
++                  />
 +                </div>
 +              </Show>
 +
@@ -736,6 +761,8 @@ index 000000000..1f5048f26
 +  const [profiles, setProfiles] = createSignal<Record<string, KeyProfileState>>({})
 +  // [cx] US-009: 正在切换激活的 key id（切换期间禁用相关按钮、显示反馈）。
 +  const [switchingId, setSwitchingId] = createSignal<string | null>(null)
++  const [notice, setNotice] = createSignal("")
++  let refreshVersion = 0
 +
 +  const activeEntry = () => keys().find((k) => k.isActive) ?? keys()[0]
 +  const activeProfile = (): KeyProfileState | undefined => {
@@ -745,27 +772,34 @@ index 000000000..1f5048f26
 +
 +  // [cx] US-010: 充值 URL 派生自「当前激活 key」，随切换响应式变化。都缺失则空串 → 按钮禁用。
 +  const topupUrl = () => resolveTopupUrl(activeEntry()?.baseURL)
++  const siteUrl = () => resolveSiteUrl(activeEntry()?.baseURL)
 +  // 有任一 key 仍在加载即视为刷新中（一键刷新按钮据此禁用 + 改文案）。
 +  const anyLoading = () => keys().some((k) => (profiles()[k.id]?.status ?? "loading") === "loading")
 +
 +  // 对单个 key 拉 profile：先置 loading（加载反馈），再写入结果。
-+  async function loadProfile(entry: ResolvedKey): Promise<void> {
++  async function loadProfile(entry: ResolvedKey, version = refreshVersion): Promise<void> {
 +    setProfiles((prev) => ({ ...prev, [entry.id]: { status: "loading" } }))
 +    const result = await fetchProfileWith(entry.baseURL, entry.key)
++    if (version !== refreshVersion) return
 +    setProfiles((prev) => ({ ...prev, [entry.id]: result }))
 +  }
 +
 +  // [cx] US-008: 一键刷新——对所有可见 key 重新拉取 profile。
 +  function refreshAll(): void {
-+    for (const entry of keys()) void loadProfile(entry)
++    const version = ++refreshVersion
++    for (const entry of keys()) void loadProfile(entry, version)
 +  }
 +
 +  // 从本地 store 重新拉列表并刷新 profile（增删改切换后调用以同步 UI）。
 +  async function reload(): Promise<void> {
++    const version = ++refreshVersion
 +    const state = await loadChannelState()
-+    setKeys(resolveKeyList(state))
++    if (version !== refreshVersion) return
++    const next = resolveKeyList(state)
++    setKeys(next)
++    setProfiles({})
 +    setInitializing(false)
-+    refreshAll()
++    for (const entry of next) void loadProfile(entry, version)
 +  }
 +
 +  onMount(() => {
@@ -845,6 +879,7 @@ index 000000000..1f5048f26
 +  async function handleActivate(entry: ResolvedKey): Promise<void> {
 +    if (entry.builtin || entry.isActive || switchingId()) return
 +    setSwitchingId(entry.id)
++    setNotice("")
 +    try {
 +      await cxChannelApi()?.channelKeysSetActive?.(entry.id)
 +      // 拉该 key 的可用模型并落盘（供 provider 的可选模型）。失败返回空数组，不阻断切换。
@@ -867,7 +902,7 @@ index 000000000..1f5048f26
 +      }
 +      await reload()
 +    } catch {
-+      // 忽略：切换失败不让面板崩溃。
++      setNotice("切换失败，请检查本地配置后重试。")
 +    } finally {
 +      setSwitchingId(null)
 +    }
@@ -887,142 +922,153 @@ index 000000000..1f5048f26
 +          {/* [cx] US-011: 首启无 key 引导。 */}
 +          <Match when={keys().length === 0}>
 +            <div data-slot="cx-onboard">
-+              <div data-slot="cx-onboard-title">还没有可用的 key</div>
++              <div data-slot="cx-onboard-icon">
++                <Icon name="plus" />
++              </div>
++              <div data-slot="cx-onboard-title">连接你的 Dokng 账户</div>
 +              <div data-slot="cx-onboard-desc">
-+                导入一个 API Key（sk-…）即可开始使用。
-+                <br />
-+                在下方粘贴你的 key 完成导入。
++                先在 Dokng 控制台创建 API Key，再将它粘贴到下方。Key 只保存在本机，并会自动读取账户余额与可用模型。
++              </div>
++              <Show when={siteUrl()}>
++                <ButtonV2 variant="neutral" size="normal" class="cx-site-button" onClick={() => openTopup(siteUrl())}>
++                  前往 Dokng 获取 API Key
++                  <Icon name="outline-square-arrow" size="small" />
++                </ButtonV2>
++              </Show>
++              <div data-slot="cx-onboard-divider">
++                <span>已有 API Key</span>
 +              </div>
 +              <AddKeyForm onAdd={handleAdd} startOpen />
 +            </div>
 +          </Match>
 +
-+          {/* [cx] 两栏。左＝账户卡（环形图＋充值＋用量小结），右＝key 列表（内部滚动）。 */}
++          {/* [cx] 账户工作台：摘要、真实指标与 key 管理。 */}
 +          <Match when={keys().length > 0}>
-+            <div data-slot="cx-columns">
-+              {/* ── 左：账户卡 ── */}
-+              <div data-slot="cx-account-col">
++            <div data-slot="cx-dashboard">
++              <div data-slot="cx-dashboard-head">
 +                <Switch>
 +                  <Match when={(activeProfile()?.status ?? "loading") === "loading"}>
-+                    <div data-slot="cx-donut">
-+                      <ProgressCircleV2 percentage={0} size={132} strokeWidth={10} class="cx-donut-ring" />
-+                      <div data-slot="cx-donut-center">
-+                        <div data-slot="cx-donut-label">加载中…</div>
++                    <div data-slot="cx-account-head" data-loading="">
++                      <div data-slot="cx-account-avatar-fallback">…</div>
++                      <div data-slot="cx-account-copy">
++                        <div data-slot="cx-account-name">正在读取账户</div>
++                        <div data-slot="cx-account-subtitle">正在连接当前激活的 key</div>
 +                      </div>
 +                    </div>
 +                  </Match>
-+
 +                  <Match when={(activeProfile()?.status ?? "loading") === "error"}>
-+                    <div data-slot="cx-donut">
-+                      <ProgressCircleV2 percentage={0} size={132} strokeWidth={10} class="cx-donut-ring" />
-+                      <div data-slot="cx-donut-center">
-+                        <div data-slot="cx-donut-label" data-error="">
-+                          获取失败
-+                        </div>
++                    <div data-slot="cx-account-head">
++                      <div data-slot="cx-account-avatar-fallback" data-error="">
++                        !
++                      </div>
++                      <div data-slot="cx-account-copy">
++                        <div data-slot="cx-account-name">账户数据不可用</div>
++                        <div data-slot="cx-account-subtitle">key 仍可管理，刷新后将重新请求</div>
 +                      </div>
 +                    </div>
 +                  </Match>
-+
-+                  <Match when={activeProfile() as Extract<KeyProfileState, { status: "ready" }>} keyed>
++                  <Match
++                    when={
++                      activeProfile()?.status === "ready"
++                        ? (activeProfile() as Extract<KeyProfileState, { status: "ready" }>)
++                        : undefined
++                    }
++                    keyed
++                  >
 +                    {(ready) => (
-+                      <>
-+                        {/* [cx] 账户头：头像 + 用户名（对齐参考布局左栏顶部）。 */}
-+                        <div data-slot="cx-account-head">
-+                          <Show
-+                            when={ready.avatar}
-+                            fallback={<div data-slot="cx-account-avatar-fallback">{avatarInitial(ready.username)}</div>}
-+                          >
-+                            <img src={ready.avatar} alt="头像" data-slot="cx-account-avatar" />
-+                          </Show>
-+                          <div data-slot="cx-account-name">{ready.username || "未命名用户"}</div>
-+                        </div>
-+
-+                        {/* 环形图：accent 弧段=已用占比，中心=剩余余额。 */}
-+                        <div data-slot="cx-donut">
-+                          <ProgressCircleV2
-+                            percentage={usedPercent(ready.usedQuota, ready.quota)}
-+                            size={132}
-+                            strokeWidth={10}
-+                            class="cx-donut-ring"
-+                          />
-+                          <div data-slot="cx-donut-center">
-+                            <div data-slot="cx-donut-balance">
-+                              {ready.unlimited ? "不限额" : formatCurrency(Math.max(0, ready.quota - ready.usedQuota))}
-+                            </div>
-+                            <div data-slot="cx-donut-label">余额 Balance</div>
-+                          </div>
-+                        </div>
-+
-+                        <ButtonV2
-+                          variant="contrast"
-+                          size="large"
-+                          class="cx-topup-button"
-+                          disabled={!topupUrl()}
-+                          onClick={() => openTopup(topupUrl())}
++                      <div data-slot="cx-account-head">
++                        <Show
++                          when={ready.avatar}
++                          fallback={<div data-slot="cx-account-avatar-fallback">{avatarInitial(ready.username)}</div>}
 +                        >
-+                          充值
-+                        </ButtonV2>
-+                        <Show when={!topupUrl()}>
-+                          <div data-slot="cx-hint">未配置充值地址</div>
++                          <img src={ready.avatar} alt="头像" data-slot="cx-account-avatar" />
 +                        </Show>
-+
-+                        <div data-slot="cx-usage-box">
-+                          <div data-slot="cx-usage-title">用量 Usage</div>
-+                          <div data-slot="cx-usage-row">
-+                            <span>今日消耗</span>
-+                            <span data-slot="cx-usage-value">
-+                              {ready.usedToday === null ? "—" : formatCurrency(ready.usedToday)}
-+                            </span>
-+                          </div>
-+                          <div data-slot="cx-usage-row">
-+                            <span>账户总额</span>
-+                            <span data-slot="cx-usage-value">{ready.unlimited ? "不限额" : formatCurrency(ready.quota)}</span>
-+                          </div>
-+                          <div data-slot="cx-usage-row">
-+                            <span>已用</span>
-+                            <span data-slot="cx-usage-value">{formatCurrency(ready.usedQuota)}</span>
-+                          </div>
-+                          <Show when={!ready.unlimited}>
-+                            <div data-slot="cx-usage-row">
-+                              <span>使用率</span>
-+                              <span data-slot="cx-usage-value">{usedPercent(ready.usedQuota, ready.quota)}%</span>
-+                            </div>
-+                          </Show>
++                        <div data-slot="cx-account-copy">
++                          <div data-slot="cx-account-name">{ready.username || "未命名用户"}</div>
++                          <div data-slot="cx-account-subtitle">当前使用 {activeEntry()?.label}</div>
 +                        </div>
-+
-+                        {/* [cx] 底部「前往 Dokng 查看更多」链接（对齐参考布局左栏底部）。打开由激活
-+                            key 的 baseURL 推导的 new-api 站点根（同充值地址来源），缺失则不渲染。 */}
-+                        <Show when={topupUrl()}>
-+                          <div
-+                            data-slot="cx-site-link"
-+                            role="link"
-+                            tabindex="0"
-+                            onClick={() => openTopup(topupUrl())}
-+                            onKeyDown={(e) => {
-+                              if (e.key === "Enter" || e.key === " ") openTopup(topupUrl())
-+                            }}
-+                          >
-+                            前往 Dokng 查看更多 →
-+                          </div>
-+                        </Show>
-+                      </>
++                        <Tag data-slot="cx-connection-tag">已连接</Tag>
++                      </div>
 +                    )}
 +                  </Match>
 +                </Switch>
++                <div data-slot="cx-dashboard-actions">
++                  <TooltipV2 value="刷新全部账户数据" placement="bottom">
++                    <IconButtonV2
++                      aria-label="刷新全部账户数据"
++                      variant="neutral"
++                      size="normal"
++                      disabled={anyLoading()}
++                      onClick={refreshAll}
++                      icon={<Icon name="reset" size="small" />}
++                    />
++                  </TooltipV2>
++                  <Show when={siteUrl()}>
++                    <ButtonV2 variant="neutral" size="normal" onClick={() => openTopup(siteUrl())}>
++                      控制台
++                      <Icon name="outline-square-arrow" size="small" />
++                    </ButtonV2>
++                  </Show>
++                  <ButtonV2
++                    variant="contrast"
++                    size="normal"
++                    disabled={!topupUrl()}
++                    onClick={() => openTopup(topupUrl())}
++                  >
++                    充值
++                  </ButtonV2>
++                </div>
 +              </div>
 +
-+              {/* ── 右：key 列表 ── */}
++              <Show
++                when={
++                  activeProfile()?.status === "ready"
++                    ? (activeProfile() as Extract<KeyProfileState, { status: "ready" }>)
++                    : undefined
++                }
++                keyed
++              >
++                {(ready) => (
++                  <div data-slot="cx-metrics">
++                    <div data-slot="cx-metric">
++                      <span>可用余额</span>
++                      <strong>
++                        {ready.unlimited ? "不限额" : formatCurrency(Math.max(0, ready.quota - ready.usedQuota))}
++                      </strong>
++                      <small>{ready.unlimited ? "无额度限制" : `总额 ${formatCurrency(ready.quota)}`}</small>
++                    </div>
++                    <div data-slot="cx-metric">
++                      <span>今日消耗</span>
++                      <strong>{ready.usedToday === null ? "—" : formatCurrency(ready.usedToday)}</strong>
++                      <small>账户今日用量</small>
++                    </div>
++                    <div data-slot="cx-metric">
++                      <span>累计消耗</span>
++                      <strong>{formatCurrency(ready.usedQuota)}</strong>
++                      <small>
++                        {ready.unlimited ? "不限额账户" : `已使用 ${usedPercent(ready.usedQuota, ready.quota)}%`}
++                      </small>
++                    </div>
++                    <div data-slot="cx-metric">
++                      <span>可用模型</span>
++                      <strong>{activeEntry()?.models.length || "—"}</strong>
++                      <small>{activeEntry()?.models.length ? "已缓存模型" : "切换时自动同步"}</small>
++                    </div>
++                  </div>
++                )}
++              </Show>
++
++              <Show when={notice()}>
++                <div data-slot="cx-notice">{notice()}</div>
++              </Show>
++
 +              <div data-slot="cx-key-col">
 +                <div data-slot="cx-key-col-head">
-+                  <span data-slot="cx-key-col-title">
-+                    Key 列表 <span data-slot="cx-key-count">· {keys().length}</span>
-+                  </span>
-+                  <span data-slot="cx-key-col-actions">
-+                    <ButtonV2 variant="neutral" size="small" disabled={anyLoading()} onClick={refreshAll}>
-+                      {anyLoading() ? "刷新中…" : "刷新"}
-+                    </ButtonV2>
-+                    <span data-slot="cx-key-col-tip">点击卡片切换激活</span>
-+                  </span>
++                  <div>
++                    <span data-slot="cx-key-col-title">API Keys</span>
++                    <span data-slot="cx-key-count">{keys().length}</span>
++                    <div data-slot="cx-key-col-tip">管理凭据、余额与模型能力</div>
++                  </div>
 +                </div>
 +                <div data-slot="cx-key-list">
 +                  <For each={keys()}>
@@ -1049,10 +1095,10 @@ index 000000000..1f5048f26
 +}
 diff --git a/packages/app/src/components/cx-account/cx-account-import.tsx b/packages/app/src/components/cx-account/cx-account-import.tsx
 new file mode 100644
-index 000000000..2658579ac
+index 000000000..2a4abd208
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-account-import.tsx
-@@ -0,0 +1,170 @@
+@@ -0,0 +1,173 @@
 +// [cx] US-013: dokng:// 深链一键导入确认框（迁自 desktop 包 balance-panel.tsx 的 ImportDialog）。
 +//
 +// 网站点击「一键导入」→ 系统唤起 App（dokng:// 协议，06 补丁在主进程注册）→ opencode 既有 deep-link
@@ -1154,7 +1200,8 @@ index 000000000..2658579ac
 +            <div data-slot="cx-import-done">
 +              <div data-slot="cx-onboard-title">✅ 导入成功</div>
 +              <p data-slot="cx-import-done-text">
-+                「{props.request.label || maskKey(props.request.key) || "新 key"}」已加入本地列表。是否立即设为激活 key？
++                「{props.request.label || maskKey(props.request.key) || "新 key"}」已加入本地列表。是否立即设为激活
++                key？
 +              </p>
 +              <div data-slot="cx-form-actions">
 +                <ButtonV2
@@ -1186,7 +1233,9 @@ index 000000000..2658579ac
 +          </Match>
 +
 +          <Match when={phase().status === "confirm" || phase().status === "saving"}>
-+            <p data-slot="cx-import-notice">收到一条导入请求。请确认以下 key 信息无误后再导入——请勿导入来源不明的 key。</p>
++            <p data-slot="cx-import-notice">
++              收到一条导入请求。请确认以下 key 信息无误后再导入——请勿导入来源不明的 key。
++            </p>
 +            <div data-slot="cx-import-rows">
 +              <div data-slot="cx-import-row">
 +                <span data-slot="cx-import-row-label">名称</span>
@@ -1225,262 +1274,222 @@ index 000000000..2658579ac
 +export { CxDialogImport }
 diff --git a/packages/app/src/components/cx-account/cx-account.css b/packages/app/src/components/cx-account/cx-account.css
 new file mode 100644
-index 000000000..8951bd63d
+index 000000000..f82c2b875
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-account.css
-@@ -0,0 +1,515 @@
-+/* [cx] 账户面板样式 —— 全部走 opencode v2 语义变量（无硬编码颜色），
-+ * 自动跟随明暗主题，与原生设置页视觉统一。选择器统一走 TSX 实际渲染的
-+ * data-slot 属性（TSX 以 data-slot 命名各区块，仅少量用 class），并全部
-+ * 收敛在 .cx-account-body（账户面板 / 导入框的 DialogBody class）作用域内，
-+ * 避免 cx- 前缀 data-slot 与 v2 组件内部 slot 或其它页面撞名。
-+ * 强调色统一用 --v2-*-accent（v2 蓝），中性色用 bg-layer / text / border 语义层。 */
-+
+@@ -0,0 +1,542 @@
++/* [cx] 账户工作台：完全复用 OpenCode v2 语义 token，不引入品牌外配色。 */
 +@import "@opencode-ai/ui/v2/button-v2.css";
++@import "@opencode-ai/ui/v2/icon-button-v2.css";
 +@import "@opencode-ai/ui/v2/text-input-v2.css";
++@import "@opencode-ai/ui/v2/tooltip-v2.css";
 +
-+/* ── 对话框正文：账户面板 large、导入框 normal，均复用 dialog-v2 容器 ── */
 +.cx-account-body {
-+  padding: 0 16px 16px;
++  padding: 0 24px 24px;
 +  overflow-y: auto;
 +  scrollbar-width: none;
 +}
 +
-+.cx-account-body::-webkit-scrollbar {
-+  display: none;
-+}
-+
-+/* ── 两栏布局：左账户卡固定宽，右 key 列表自适应 ── */
-+.cx-account-body [data-slot="cx-columns"] {
-+  display: flex;
-+  gap: 16px;
-+  align-items: stretch;
-+  width: 100%;
-+  min-height: 0;
-+}
-+
-+.cx-account-body [data-slot="cx-account-col"] {
-+  width: 232px;
-+  flex-shrink: 0;
-+  display: flex;
-+  flex-direction: column;
-+}
-+
-+.cx-account-body [data-slot="cx-key-col"] {
-+  flex: 1;
-+  min-width: 0;
-+  display: flex;
-+  flex-direction: column;
-+  min-height: 0;
-+  background: var(--v2-background-bg-layer-01);
-+  border: 1px solid var(--v2-border-border-muted);
-+  border-radius: 8px;
-+  overflow: hidden;
-+}
-+
-+/* ── 账户卡：账户头（头像 + 用户名）+ 环形图 + 充值 + 用量小结 ── */
-+.cx-account-body [data-slot="cx-account-head"] {
-+  display: flex;
-+  flex-direction: column;
-+  align-items: center;
-+  gap: 8px;
-+  padding: 4px 0 12px;
-+}
-+
-+.cx-account-body [data-slot="cx-account-avatar"] {
-+  width: 52px;
-+  height: 52px;
-+  border-radius: 9999px;
-+  object-fit: cover;
-+  border: 1px solid var(--v2-border-border-muted);
-+}
-+
-+.cx-account-body [data-slot="cx-account-avatar-fallback"] {
-+  width: 52px;
-+  height: 52px;
-+  border-radius: 9999px;
-+  display: flex;
-+  align-items: center;
-+  justify-content: center;
-+  background: var(--v2-background-bg-accent);
-+  color: var(--v2-text-text-contrast);
-+  font-size: 22px;
-+  font-weight: 640;
-+}
-+
-+.cx-account-body [data-slot="cx-account-name"] {
-+  font-size: 14px;
-+  font-weight: 590;
-+  color: var(--v2-text-text-base);
-+  max-width: 100%;
-+  white-space: nowrap;
-+  overflow: hidden;
-+  text-overflow: ellipsis;
-+}
-+
-+/* ── 账户卡：环形图 + 充值 + 用量小结 ── */
-+.cx-account-body [data-slot="cx-donut"] {
-+  position: relative;
-+  width: 148px;
-+  height: 148px;
-+  margin: 0 auto 20px;
-+  display: flex;
-+  align-items: center;
-+  justify-content: center;
-+}
-+
-+/* 环形图 progress 弧段覆盖为 accent 蓝（默认 v2 是中性灰）。 */
-+.cx-account-body [data-slot="cx-donut"] [data-slot="progress-circle-v2-progress"] {
-+  stroke: var(--v2-icon-icon-accent);
-+}
-+
-+.cx-account-body [data-slot="cx-donut-center"] {
-+  position: absolute;
-+  inset: 0;
-+  display: flex;
-+  flex-direction: column;
-+  align-items: center;
-+  justify-content: center;
-+  text-align: center;
-+  gap: 2px;
-+}
-+
-+.cx-account-body [data-slot="cx-donut-balance"] {
-+  font-size: 22px;
-+  font-weight: 640;
-+  line-height: 1;
-+  color: var(--v2-text-text-base);
-+  font-variant-numeric: tabular-nums;
-+}
-+
-+.cx-account-body [data-slot="cx-donut-label"] {
-+  font-size: 11px;
-+  color: var(--v2-text-text-muted);
-+}
-+
-+.cx-account-body [data-slot="cx-donut-label"][data-error] {
-+  color: var(--v2-state-fg-danger);
-+}
-+
-+.cx-account-body .cx-topup-button {
-+  width: 100%;
-+  margin-top: 4px;
-+}
-+
-+.cx-account-body [data-slot="cx-hint"] {
-+  margin-top: 8px;
-+  font-size: 12px;
-+  color: var(--v2-text-text-faint);
-+  text-align: center;
-+}
-+
-+.cx-account-body [data-slot="cx-usage-box"] {
-+  margin-top: 20px;
-+  padding-top: 16px;
-+  border-top: 1px solid var(--v2-border-border-muted);
-+}
-+
-+.cx-account-body [data-slot="cx-usage-title"] {
-+  margin-bottom: 12px;
-+  font-size: 11px;
-+  font-weight: 530;
-+  letter-spacing: 0.4px;
-+  text-transform: uppercase;
-+  color: var(--v2-text-text-faint);
-+}
-+
-+.cx-account-body [data-slot="cx-usage-row"] {
-+  display: flex;
-+  justify-content: space-between;
-+  align-items: baseline;
-+  font-size: 13px;
-+  margin-bottom: 9px;
-+}
-+
-+.cx-account-body [data-slot="cx-usage-row"] span:first-child {
-+  color: var(--v2-text-text-muted);
-+}
-+
-+.cx-account-body [data-slot="cx-usage-value"] {
-+  color: var(--v2-text-text-base);
-+  font-weight: 590;
-+  font-variant-numeric: tabular-nums;
-+}
-+
-+/* ── 底部「前往 Dokng 查看更多」链接（对齐参考布局左栏底部）。margin-top:auto 把它推到
-+   账户列底部，与右侧 key 列表列等高对齐。 ── */
-+.cx-account-body [data-slot="cx-site-link"] {
-+  margin-top: auto;
-+  padding-top: 20px;
-+  font-size: 13px;
-+  font-weight: 530;
-+  color: var(--v2-text-text-accent);
-+  text-align: center;
-+  cursor: pointer;
-+  user-select: none;
-+}
-+
-+.cx-account-body [data-slot="cx-site-link"]:hover {
-+  text-decoration: underline;
-+}
-+
-+/* ── key 列表列 ── */
-+.cx-account-body [data-slot="cx-key-col-head"] {
-+  display: flex;
-+  align-items: center;
-+  justify-content: space-between;
-+  gap: 8px;
-+  padding: 12px 14px;
-+  border-bottom: 1px solid var(--v2-border-border-muted);
-+  flex-shrink: 0;
-+}
-+
-+.cx-account-body [data-slot="cx-key-col-title"] {
-+  font-size: 13px;
-+  font-weight: 590;
-+  color: var(--v2-text-text-base);
-+}
-+
-+.cx-account-body [data-slot="cx-key-count"] {
-+  color: var(--v2-text-text-accent);
-+}
-+
-+.cx-account-body [data-slot="cx-key-col-actions"] {
-+  display: flex;
-+  align-items: center;
-+  gap: 10px;
-+}
-+
-+.cx-account-body [data-slot="cx-key-col-tip"] {
-+  font-size: 12px;
-+  color: var(--v2-text-text-faint);
-+}
-+
-+.cx-account-body [data-slot="cx-key-list"] {
-+  flex: 1;
-+  overflow-y: auto;
-+  padding: 12px 14px;
-+  display: flex;
-+  flex-direction: column;
-+  gap: 10px;
-+  scrollbar-width: none;
-+}
-+
++.cx-account-body::-webkit-scrollbar,
 +.cx-account-body [data-slot="cx-key-list"]::-webkit-scrollbar {
 +  display: none;
 +}
 +
-+/* ── key 卡片 ── */
-+.cx-account-body [data-slot="cx-key-card"] {
-+  background: var(--v2-background-bg-layer-02);
-+  border: 1px solid var(--v2-border-border-muted);
-+  border-radius: 8px;
-+  padding: 13px 14px;
++.cx-account-body [data-slot="cx-dashboard"] {
++  display: flex;
++  min-width: 0;
++  flex-direction: column;
++  gap: 20px;
 +}
 +
-+.cx-account-body [data-slot="cx-key-card"][data-active] {
-+  border-color: var(--v2-border-border-focus);
-+  background: var(--v2-state-bg-info);
++.cx-account-body [data-slot="cx-dashboard-head"] {
++  display: flex;
++  min-width: 0;
++  align-items: center;
++  justify-content: space-between;
++  gap: 24px;
++  padding: 4px 0 16px;
++  border-bottom: 0.5px solid var(--v2-border-border-base);
++}
++
++.cx-account-body [data-slot="cx-account-head"] {
++  display: flex;
++  min-width: 0;
++  flex: 1;
++  align-items: center;
++  gap: 12px;
++}
++
++.cx-account-body [data-slot="cx-account-avatar"],
++.cx-account-body [data-slot="cx-account-avatar-fallback"] {
++  width: 40px;
++  height: 40px;
++  flex-shrink: 0;
++  border: 0.5px solid var(--v2-border-border-base);
++  border-radius: 8px;
++}
++
++.cx-account-body [data-slot="cx-account-avatar"] {
++  object-fit: cover;
++}
++
++.cx-account-body [data-slot="cx-account-avatar-fallback"] {
++  display: flex;
++  align-items: center;
++  justify-content: center;
++  background: var(--v2-background-bg-layer-02);
++  color: var(--v2-text-text-muted);
++  font-size: 15px;
++  font-weight: 640;
++}
++
++.cx-account-body [data-slot="cx-account-avatar-fallback"][data-error] {
++  background: var(--v2-state-bg-danger);
++  color: var(--v2-state-fg-danger);
++}
++
++.cx-account-body [data-slot="cx-account-copy"] {
++  display: flex;
++  min-width: 0;
++  flex-direction: column;
++  gap: 6px;
++}
++
++.cx-account-body [data-slot="cx-account-name"] {
++  overflow: hidden;
++  color: var(--v2-text-text-base);
++  font-size: 15px;
++  font-weight: 640;
++  line-height: 1;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++}
++
++.cx-account-body [data-slot="cx-account-subtitle"] {
++  overflow: hidden;
++  color: var(--v2-text-text-muted);
++  font-size: 11px;
++  font-weight: 440;
++  line-height: 1;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++}
++
++.cx-account-body [data-slot="cx-connection-tag"] {
++  flex-shrink: 0;
++}
++
++.cx-account-body [data-slot="cx-dashboard-actions"] {
++  display: flex;
++  flex-shrink: 0;
++  align-items: center;
++  gap: 8px;
++}
++
++.cx-account-body [data-slot="cx-metrics"] {
++  display: grid;
++  grid-template-columns: repeat(4, minmax(0, 1fr));
++  overflow: hidden;
++  border-radius: 8px;
++  background: var(--v2-background-bg-layer-01);
++  box-shadow: inset 0 0 0 0.5px var(--v2-border-border-muted);
++}
++
++.cx-account-body [data-slot="cx-metric"] {
++  display: flex;
++  min-width: 0;
++  flex-direction: column;
++  gap: 8px;
++  padding: 16px 18px;
++  border-right: 0.5px solid var(--v2-border-border-base);
++}
++
++.cx-account-body [data-slot="cx-metric"]:last-child {
++  border-right: 0;
++}
++
++.cx-account-body [data-slot="cx-metric"] > span,
++.cx-account-body [data-slot="cx-metric"] > small {
++  overflow: hidden;
++  color: var(--v2-text-text-muted);
++  font-size: 11px;
++  font-weight: 440;
++  line-height: 1;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++}
++
++.cx-account-body [data-slot="cx-metric"] > strong {
++  overflow: hidden;
++  color: var(--v2-text-text-base);
++  font-size: 20px;
++  font-weight: 640;
++  line-height: 1;
++  font-variant-numeric: tabular-nums;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++}
++
++.cx-account-body [data-slot="cx-notice"] {
++  padding: 10px 12px;
++  border: 0.5px solid var(--v2-state-border-danger);
++  border-radius: 6px;
++  background: var(--v2-state-bg-danger);
++  color: var(--v2-state-fg-danger);
++  font-size: 12px;
++}
++
++.cx-account-body [data-slot="cx-key-col"] {
++  overflow: hidden;
++  border-radius: 8px;
++  background: var(--v2-background-bg-layer-01);
++  box-shadow: inset 0 0 0 0.5px var(--v2-border-border-muted);
++}
++
++.cx-account-body [data-slot="cx-key-col-head"] {
++  padding: 16px 20px;
++  border-bottom: 0.5px solid var(--v2-border-border-base);
++}
++
++.cx-account-body [data-slot="cx-key-col-title"] {
++  color: var(--v2-text-text-base);
++  font-size: 13px;
++  font-weight: 530;
++}
++
++.cx-account-body [data-slot="cx-key-count"] {
++  display: inline-flex;
++  min-width: 18px;
++  height: 18px;
++  align-items: center;
++  justify-content: center;
++  margin-left: 8px;
++  border-radius: 99px;
++  background: var(--v2-background-bg-layer-03);
++  color: var(--v2-text-text-muted);
++  font-size: 10px;
++  font-variant-numeric: tabular-nums;
++}
++
++.cx-account-body [data-slot="cx-key-col-tip"] {
++  margin-top: 6px;
++  color: var(--v2-text-text-muted);
++  font-size: 11px;
++}
++
++.cx-account-body [data-slot="cx-key-list"] {
++  display: flex;
++  max-height: 360px;
++  flex-direction: column;
++  overflow-y: auto;
++  scrollbar-width: none;
++}
++
++.cx-account-body [data-slot="cx-key-card"] {
++  padding: 16px 20px;
++  border-bottom: 0.5px solid var(--v2-border-border-base);
++  outline: none;
++  transition: background-color 120ms ease;
 +}
 +
 +.cx-account-body [data-slot="cx-key-card"][data-clickable] {
@@ -1488,14 +1497,23 @@ index 000000000..8951bd63d
 +}
 +
 +.cx-account-body [data-slot="cx-key-card"][data-clickable]:hover {
-+  border-color: var(--v2-border-border-strong);
++  background: var(--v2-overlay-simple-overlay-hover);
++}
++
++.cx-account-body [data-slot="cx-key-card"][data-active] {
++  box-shadow: inset 2px 0 0 var(--v2-border-border-focus);
++}
++
++.cx-account-body [data-slot="cx-key-card-head"],
++.cx-account-body [data-slot="cx-key-user"],
++.cx-account-body [data-slot="cx-key-actions"] {
++  display: flex;
++  align-items: center;
 +}
 +
 +.cx-account-body [data-slot="cx-key-card-head"] {
-+  display: flex;
-+  align-items: center;
-+  gap: 10px;
-+  margin-bottom: 8px;
++  gap: 12px;
++  margin-bottom: 10px;
 +}
 +
 +.cx-account-body [data-slot="cx-key-card-title"] {
@@ -1504,142 +1522,135 @@ index 000000000..8951bd63d
 +}
 +
 +.cx-account-body [data-slot="cx-key-label"] {
-+  font-size: 13px;
-+  font-weight: 590;
-+  color: var(--v2-text-text-base);
-+  white-space: nowrap;
 +  overflow: hidden;
++  color: var(--v2-text-text-base);
++  font-size: 13px;
++  font-weight: 530;
++  line-height: 16px;
 +  text-overflow: ellipsis;
++  white-space: nowrap;
 +}
 +
 +.cx-account-body [data-slot="cx-key-masked"] {
-+  font-size: 12px;
++  margin-top: 4px;
 +  color: var(--v2-text-text-faint);
 +  font-family: var(--font-mono, monospace);
++  font-size: 11px;
 +}
 +
-+/* key 卡片内头像（账户级 profile 的头像） */
-+.cx-account-body [data-slot="cx-mini-avatar"] {
-+  width: 22px;
-+  height: 22px;
-+  border-radius: 9999px;
-+  object-fit: cover;
-+  border: 1px solid var(--v2-border-border-muted);
++.cx-account-body [data-slot="cx-active-tag"] {
 +  flex-shrink: 0;
 +}
 +
++.cx-account-body [data-slot="cx-mini-avatar"],
 +.cx-account-body [data-slot="cx-mini-avatar-fallback"] {
 +  width: 22px;
 +  height: 22px;
-+  border-radius: 9999px;
++  flex-shrink: 0;
++  border: 0.5px solid var(--v2-border-border-base);
++  border-radius: 5px;
++}
++
++.cx-account-body [data-slot="cx-mini-avatar"] {
++  object-fit: cover;
++}
++
++.cx-account-body [data-slot="cx-mini-avatar-fallback"] {
 +  display: flex;
 +  align-items: center;
 +  justify-content: center;
-+  background: var(--v2-background-bg-accent);
-+  color: var(--v2-text-text-contrast);
-+  font-size: 11px;
-+  font-weight: 590;
-+  flex-shrink: 0;
++  background: var(--v2-background-bg-layer-03);
++  color: var(--v2-text-text-muted);
++  font-size: 10px;
++  font-weight: 530;
 +}
 +
 +.cx-account-body [data-slot="cx-key-user"] {
-+  display: flex;
-+  align-items: center;
++  min-width: 0;
 +  gap: 8px;
-+  font-size: 12px;
-+  color: var(--v2-text-text-base);
-+  margin-bottom: 8px;
 +}
 +
 +.cx-account-body [data-slot="cx-key-username"] {
-+  flex: 1;
 +  min-width: 0;
-+  white-space: nowrap;
++  flex: 1;
 +  overflow: hidden;
++  color: var(--v2-text-text-muted);
++  font-size: 12px;
 +  text-overflow: ellipsis;
++  white-space: nowrap;
 +}
 +
 +.cx-account-body [data-slot="cx-key-balance"] {
-+  font-size: 12px;
++  flex-shrink: 0;
 +  color: var(--v2-text-text-muted);
-+  white-space: nowrap;
++  font-size: 11px;
 +}
 +
 +.cx-account-body [data-slot="cx-key-balance"] b {
 +  color: var(--v2-text-text-base);
-+  font-weight: 590;
++  font-weight: 530;
++  font-variant-numeric: tabular-nums;
 +}
 +
-+/* per-key 使用率进度条 */
 +.cx-account-body [data-slot="cx-key-bar-track"] {
-+  width: 100%;
-+  height: 4px;
-+  border-radius: 9999px;
-+  background: var(--v2-background-bg-layer-04);
-+  margin-top: 8px;
++  height: 3px;
++  margin-top: 12px;
 +  overflow: hidden;
++  border-radius: 99px;
++  background: var(--v2-background-bg-layer-04);
 +}
 +
 +.cx-account-body [data-slot="cx-key-bar-fill"] {
 +  height: 100%;
++  border-radius: inherit;
 +  background: var(--v2-background-bg-accent);
 +}
 +
-+.cx-account-body [data-slot="cx-key-meta"] {
-+  font-size: 11px;
-+  color: var(--v2-text-text-faint);
++.cx-account-body [data-slot="cx-key-meta"],
++.cx-account-body [data-slot="cx-key-models"],
++.cx-account-body [data-slot="cx-key-state"] {
 +  margin-top: 8px;
++  color: var(--v2-text-text-faint);
++  font-size: 11px;
 +}
 +
 +.cx-account-body [data-slot="cx-key-meta"] em {
 +  color: var(--v2-text-text-muted);
 +  font-style: normal;
-+  font-weight: 590;
-+}
-+
-+.cx-account-body [data-slot="cx-key-state"] {
-+  font-size: 12px;
-+  color: var(--v2-text-text-muted);
-+  margin-top: 8px;
-+}
-+
-+.cx-account-body [data-slot="cx-key-models"] {
-+  font-size: 11px;
-+  color: var(--v2-text-text-faint);
-+  margin-top: 8px;
++  font-variant-numeric: tabular-nums;
 +}
 +
 +.cx-account-body [data-slot="cx-key-actions"] {
-+  display: flex;
-+  align-items: center;
-+  gap: 8px;
-+  margin-top: 12px;
 +  flex-wrap: wrap;
-+}
-+
-+.cx-account-body [data-slot="cx-delete-confirm"] {
-+  font-size: 12px;
-+  color: var(--v2-state-fg-danger);
-+}
-+
-+/* ── 新增 key 表单 ── */
-+.cx-account-body [data-slot="cx-add-form"] {
-+  display: flex;
-+  flex-direction: column;
 +  gap: 8px;
-+  background: var(--v2-background-bg-layer-02);
-+  border: 1px dashed var(--v2-border-border-strong);
-+  border-radius: 8px;
-+  padding: 14px;
++  margin-top: 14px;
++}
++
++.cx-account-body [data-slot="cx-delete-confirm"],
++.cx-account-body [data-slot="cx-form-error"] {
++  color: var(--v2-state-fg-danger);
++  font-size: 11px;
++}
++
++.cx-account-body [data-slot="cx-unlimited-tag"] {
++  margin-top: 10px;
++}
++
++.cx-account-body [data-slot="cx-add-form"] {
++  display: grid;
++  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
++  gap: 10px;
++  padding: 16px 20px;
++}
++
++.cx-account-body [data-slot="cx-add-form"] [data-slot="cx-form-error"],
++.cx-account-body [data-slot="cx-add-form"] [data-slot="cx-form-actions"] {
++  grid-column: 1 / -1;
 +}
 +
 +.cx-account-body .cx-add-key-trigger {
-+  width: 100%;
-+}
-+
-+.cx-account-body [data-slot="cx-form-error"] {
-+  font-size: 12px;
-+  color: var(--v2-state-fg-danger);
++  width: fit-content;
++  margin: 12px 20px;
 +}
 +
 +.cx-account-body [data-slot="cx-form-actions"] {
@@ -1651,68 +1662,100 @@ index 000000000..8951bd63d
 +  flex: 1;
 +}
 +
-+/* ── 状态框（加载 / 空态 / 引导）── */
 +.cx-account-body [data-slot="cx-state-box"] {
-+  padding: 24px 16px;
-+  text-align: center;
++  padding: 48px 24px;
 +  color: var(--v2-text-text-muted);
 +  font-size: 13px;
-+  line-height: 1.6;
++  text-align: center;
 +}
 +
 +.cx-account-body [data-slot="cx-onboard"] {
-+  padding: 20px 16px 12px;
++  max-width: 480px;
++  margin: 24px auto 0;
++  padding: 24px;
++  border-radius: 8px;
++  background: var(--v2-background-bg-layer-01);
++  box-shadow: inset 0 0 0 0.5px var(--v2-border-border-muted);
 +  text-align: center;
 +}
 +
++.cx-account-body [data-slot="cx-onboard-icon"] {
++  display: flex;
++  width: 36px;
++  height: 36px;
++  align-items: center;
++  justify-content: center;
++  margin: 0 auto 14px;
++  border-radius: 8px;
++  background: var(--v2-background-bg-layer-03);
++  color: var(--v2-icon-icon-base);
++}
++
 +.cx-account-body [data-slot="cx-onboard-title"] {
-+  font-size: 15px;
-+  font-weight: 590;
-+  color: var(--v2-text-text-base);
 +  margin-bottom: 8px;
++  color: var(--v2-text-text-base);
++  font-size: 15px;
++  font-weight: 640;
 +}
 +
-+.cx-account-body [data-slot="cx-onboard-desc"] {
-+  font-size: 13px;
++.cx-account-body [data-slot="cx-onboard-desc"],
++.cx-account-body [data-slot="cx-import-notice"],
++.cx-account-body [data-slot="cx-import-done-text"] {
++  margin-bottom: 16px;
 +  color: var(--v2-text-text-muted);
-+  line-height: 1.6;
-+  margin-bottom: 12px;
-+}
-+
-+/* ── 导入确认框 ── */
-+.cx-account-body [data-slot="cx-import-notice"] {
 +  font-size: 13px;
-+  color: var(--v2-text-text-muted);
-+  line-height: 1.6;
-+  margin-bottom: 12px;
++  line-height: 1.5;
 +}
 +
-+.cx-account-body [data-slot="cx-import-rows"] {
++.cx-account-body .cx-site-button {
++  margin-bottom: 18px;
++}
++
++.cx-account-body [data-slot="cx-onboard-divider"] {
++  display: flex;
++  align-items: center;
++  gap: 12px;
 +  margin-bottom: 4px;
++  color: var(--v2-text-text-faint);
++  font-size: 10px;
++  white-space: nowrap;
++}
++
++.cx-account-body [data-slot="cx-onboard-divider"]::before,
++.cx-account-body [data-slot="cx-onboard-divider"]::after {
++  height: 0.5px;
++  flex: 1;
++  background: var(--v2-border-border-base);
++  content: "";
++}
++
++.cx-account-body [data-slot="cx-onboard"] [data-slot="cx-add-form"] {
++  padding: 12px 0 0;
 +}
 +
 +.cx-account-body [data-slot="cx-import-row"] {
 +  display: flex;
 +  justify-content: space-between;
-+  gap: 12px;
-+  padding: 9px 0;
-+  border-bottom: 1px solid var(--v2-border-border-muted);
++  gap: 20px;
++  padding: 12px 0;
++  border-bottom: 0.5px solid var(--v2-border-border-base);
 +  font-size: 13px;
 +}
 +
 +.cx-account-body [data-slot="cx-import-row"]:last-child,
 +.cx-account-body [data-slot="cx-import-row"][data-last] {
-+  border-bottom: none;
++  border-bottom: 0;
 +}
 +
 +.cx-account-body [data-slot="cx-import-row-label"] {
++  flex-shrink: 0;
 +  color: var(--v2-text-text-muted);
-+  white-space: nowrap;
 +}
 +
 +.cx-account-body [data-slot="cx-import-row-value"] {
++  min-width: 0;
++  overflow-wrap: anywhere;
 +  color: var(--v2-text-text-base);
-+  word-break: break-all;
 +  text-align: right;
 +  font-variant-numeric: tabular-nums;
 +}
@@ -1721,26 +1764,59 @@ index 000000000..8951bd63d
 +  text-align: center;
 +}
 +
-+.cx-account-body [data-slot="cx-import-done-text"] {
-+  font-size: 13px;
-+  color: var(--v2-text-text-muted);
-+  text-align: center;
-+  line-height: 1.6;
-+  margin-bottom: 16px;
++@media (max-width: 720px) {
++  .cx-account-body {
++    padding: 0 16px 16px;
++  }
++
++  .cx-account-body [data-slot="cx-dashboard-head"] {
++    align-items: flex-start;
++    gap: 12px;
++  }
++
++  .cx-account-body [data-slot="cx-account-head"] {
++    flex-wrap: wrap;
++  }
++
++  .cx-account-body [data-slot="cx-connection-tag"] {
++    display: none;
++  }
++
++  .cx-account-body [data-slot="cx-metrics"] {
++    grid-template-columns: repeat(2, minmax(0, 1fr));
++  }
++
++  .cx-account-body [data-slot="cx-metric"]:nth-child(2) {
++    border-right: 0;
++  }
++
++  .cx-account-body [data-slot="cx-metric"]:nth-child(-n + 2) {
++    border-bottom: 0.5px solid var(--v2-border-border-base);
++  }
++
++  .cx-account-body [data-slot="cx-add-form"] {
++    grid-template-columns: 1fr;
++  }
++
++  .cx-account-body [data-slot="cx-add-form"] > * {
++    grid-column: 1;
++  }
 +}
 +
-+/* ── Tag（激活 / 不限额）：复用 v2 badge-v2 自带样式，仅补面板内的微调 ── */
-+/* cx-active-tag 挂在 key 卡片头部右侧「激活」标签；cx-unlimited-tag 替代不限额 key 的进度条。 */
-+.cx-account-body [data-slot="cx-active-tag"] {
-+  flex-shrink: 0;
-+}
++@media (max-width: 480px) {
++  .cx-account-body [data-slot="cx-dashboard-head"] {
++    flex-direction: column;
++  }
 +
-+.cx-account-body [data-slot="cx-unlimited-tag"] {
-+  margin-top: 8px;
-+}
++  .cx-account-body [data-slot="cx-dashboard-actions"] {
++    width: 100%;
++  }
 +
-+/* ── 环形图 progress 圆环：class 由 ProgressCircleV2 直接挂在 svg 上；accent 描边已由
-+   [data-slot="cx-donut"] 内的 progress 段控制，这里仅占位保证 class 有定义、便于覆盖。 ── */
-+.cx-account-body .cx-donut-ring {
-+  display: block;
++  .cx-account-body [data-slot="cx-dashboard-actions"] [data-component="button-v2"] {
++    flex: 1;
++  }
++
++  .cx-account-body [data-slot="cx-key-balance"] {
++    display: none;
++  }
 +}
