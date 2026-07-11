@@ -52,7 +52,7 @@ index 77c120e57..eff51d9cf 100644
  export type ProjectDirString = Schema.Schema.Type<typeof ProjectDirString>
  
 diff --git a/packages/app/src/pages/layout.tsx b/packages/app/src/pages/layout.tsx
-index fd9d16b90..037f340da 100644
+index fd9d16b90..e65471da3 100644
 --- a/packages/app/src/pages/layout.tsx
 +++ b/packages/app/src/pages/layout.tsx
 @@ -1256,6 +1256,22 @@ export default function LegacyLayout(props: ParentProps) {
@@ -78,7 +78,28 @@ index fd9d16b90..037f340da 100644
      if (!server.isLocal()) return
  
      for (const directory of collectOpenProjectDeepLinks(urls)) {
-@@ -2239,6 +2255,29 @@ export default function LegacyLayout(props: ParentProps) {
+@@ -1285,6 +1301,20 @@ export default function LegacyLayout(props: ParentProps) {
+ 
+     handleDeepLinks(drainPendingDeepLinks(window))
+     makeEventListener(window, deepLinkEvent, handler as EventListener)
++
++    // [cx] FR-3.6: 首启无 key 引导。仅 desktop：启动时读本地 key 列表，若为空则自动弹出账户面板
++    // （AddKeyForm 以 startOpen 展开，引导即进入新增流程）。仅触发一次、用户关闭后本会话不重弹
++    // （dialog.show 一次性；无 key 时才弹，添加后 keys 非空自然不再触发）。面板依赖 desktop
++    // preload 的 window.api，故非 desktop 平台跳过。动态 import 与账户按钮同款懒加载。
++    if (platform.platform === "desktop") {
++      void import("@/components/cx-account/cx-account-api").then(async (api) => {
++        const state = await api.loadChannelState()
++        if (api.resolveKeyList(state).length === 0) {
++          const x = await import("@/components/cx-account/cx-account-dialog")
++          dialog.show(() => <x.CxDialogAccount />)
++        }
++      })
++    }
+   })
+ 
+   async function renameProject(project: LocalProject, next: string) {
+@@ -2239,6 +2269,29 @@ export default function LegacyLayout(props: ParentProps) {
        onOpenSettings={openSettings}
        helpLabel={() => language.t("sidebar.help")}
        onOpenHelp={() => platform.openLink("https://opencode.ai/desktop-feedback")}
