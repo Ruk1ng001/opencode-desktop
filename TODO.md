@@ -24,27 +24,25 @@
   与 `renderer/index.tsx` 挂载已删除（原补丁 01 作废）。双包 typecheck 通过、补丁可干净重放。
 - cx 自动更新指向本仓库发布（补丁 08 + release.yml + brand 配置）
 - macOS 分架构原生打包（修 pty.node 崩溃）
+- **默认语言改中文（补丁 10 + `brand.json` `defaultLocale`）**：desktop renderer 入口
+  `loadLocale` 在本地无语言存储时加载并返回品牌配置的默认 locale（缺省 `"zh"`），
+  经 `electron.vite.config.ts` 构建期注入 `import.meta.env.DEFAULT_LOCALE`；已存储语言时
+  行为不变，用户选择不被覆盖（US-001 / US-002 / US-003）。
+- **new-api `GET /api/app/profile` 后端端点（new-api 仓库，非 opencode 补丁层）**：走 token
+  鉴权中间件由 `sk-` 定位本人 profile，`user_id` 只从 token 记录派生、不读任何入参；返回
+  `username`/`avatar`/`quota`（=`user.quota + user.used_quota`）/`used_quota`/`token_remain`/
+  `token_used`/`token_used_today`/`unlimited`，可选 `used_today`（聚合失败时省略，App 端显示「—」）。
+  客户端 `cx-account` 面板已联调闭合链路（US-004 / US-005 / US-006 / US-007）。契约见
+  `brand/docs/api-app-profile.md`。
+- **`/v1/models` 已按 token `model_limits` 过滤**：经查 new-api 源码确认 `GET /v1/models` 按
+  key 返回该 key 可用模型（`TokenAuth` 注入 model_limits → `ListModels` 过滤），App 端切换 key
+  直接用 `/v1/models`，无需新增 `/api/app/models`（US-008，证据链见契约文档第 6 节）。
 
 ---
 
 ## 待办
 
-### 1. 默认语言改中文（未完成）
-
-App 默认 locale 设为中文（当前默认英文）。查 renderer 初始化 locale 逻辑（`packages/desktop/src/renderer/index.tsx` 的 `loadLocale` / `normalizeLocale`）。
-
-### 2. new-api 后端接口（你负责，契约见 `brand/docs/api-app-profile.md`）
-
-> 现状：客户端一半已完成——`cx-account` 面板已用 `sk-` API 令牌（`Authorization: Bearer sk-`）
-> 调 `/api/app/profile`，无 access_token、无 `New-Api-User` 头，凭据来源正确。链路未闭合
-> 处仅在后端：该端点尚未实现，客户端调用当前会拿到 404（面板显示「获取失败」，不崩溃）。
-
-- [ ] 实现 `GET /api/app/profile`（走 token 鉴权中间件，由 `sk-` 定位本人 profile）。
-- [ ] **`quota` 字段必须返回 `user.quota + user.used_quota`（剩余 + 已用 = 总额）**，不能直接返回原始 `user.quota`（那是剩余，前端环形图/使用率会算错）。
-- [ ] 可选字段 `used_today`（账户级今日消耗，按 user_id 聚合当天日志）；未实现时省略，前端显示「—」。
-- [ ] 确认 `/v1/models` 是否按 token `model_limits` 过滤返回该 key 可用模型；若不过滤，追加 `GET /api/app/models`（契约文档第 6 节）。
-
-### 3. 自动更新端到端验证（程序化预检已过；三平台实机待跑）
+### 1. 自动更新端到端验证（程序化预检已过；三平台实机待跑）
 
 自更新链路（补丁 08 + publish 源 + latest*.yml 合并）代码已就位。US-011 完成了**全链路程序化预检（全绿）**并固化了可复现的验证手册 `brand/docs/self-update-e2e.md`：
 

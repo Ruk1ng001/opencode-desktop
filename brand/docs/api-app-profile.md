@@ -1,6 +1,7 @@
 # new-api `/api/app/profile` 接口契约（App 端只读 profile）
 
-> 状态：**后端后续实现**。本文件是 App 端与 new-api 二开之间的**接口契约**，
+> 状态：**已落地**（后端 US-004/005/006 已实现 `GET /api/app/profile`，客户端 US-007 已联调闭合）。
+> 本文件是 App 端与 new-api 二开之间的**接口契约**，
 > 定义 App 需要的只读接口形态；new-api 侧按此实现，App 端按此对接。
 > 契约以「只读、只返回该 token 本人信息、绝不接受任意 `user_id` 入参」为不可违背的安全底线
 > （见根方案 `brand/TODO.md` 第三节「凭据模型」）。
@@ -186,4 +187,9 @@ GET /api/app/models
 |---|---|---|
 | 2026-07-09 | US-005 | 首版契约：定义 `GET /api/app/profile`（含 `token_used_today`）、安全约束、`/v1/models` 按 key 说明及 `/api/app/models` 备用接口 |
 | 2026-07-10 | 面板重设计 | 新增账户级 `used_today`（可选）字段，供左侧账户卡展示「账户今日消耗」；后端未实现时可省略，App 端显示「—」 |
+| 2026-07-11 | US-004 | 后端实现 `GET /api/app/profile`：`AppTokenAuth()`→`TokenAuth()` 走 token 鉴权，`user_id` 只从 token 记录派生、拒绝任何入参 |
+| 2026-07-11 | US-005 | 收敛返回字段与额度语义：`quota=user.quota+user.used_quota`，`used_quota`/`token_remain`/`token_used`/`token_used_today`/`unlimited` 无条件返回（移除 `DisplayTokenStatEnabled` 门控） |
+| 2026-07-11 | US-006 | `used_today` 落为可选字段：按 `user_id` 聚合当天全部 token 消费日志，聚合失败时省略（不返回 0），App 端显示「—」 |
+| 2026-07-11 | US-007 | 客户端 `cx-account` 面板联调闭合链路，按契约消费全部字段（换算在 App 端，`unlimited` 显「不限额」，`used_today` 缺省显「—」） |
 | 2026-07-11 | US-008 | 确认 `/v1/models` 已按 token `model_limits` 过滤（证据链见第 6 节结论），App 端直接用 `/v1/models`，不实现 `/api/app/models` |
+| 2026-07-11 | US-012 | 契约状态更新为「已落地」；补记 US-004/005/006/007 实现条目；同步 TODO「待办」移除已完成项 |
