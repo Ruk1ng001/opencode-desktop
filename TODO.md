@@ -13,13 +13,16 @@
 - 加/删 key 热重载生效：主进程重写 `OPENCODE_CONFIG` 文件 + `POST /global/dispose`，内核重建 instance，不重启进程（补丁 03/05）
 - 内置默认 baseURL、构建期渠道注入（补丁 02/03）
 - 首启无 key 引导、`cx://` 深链一键导入（补丁 06 + 09）
-- 账户面板两栏重设计（环形图 + 金色深色主题）
-- **账户面板迁移到 app 包、复用原生 v2 Dialog（补丁 09）**：面板从 desktop 包迁入
+- **账户面板迁入 app 包、改用原生 v2 设计系统（补丁 09）**：面板从 desktop 包迁入
   `packages/app/src/components/cx-account/`（`Cx` 前缀独立目录），外壳用原生
-  `@opencode-ai/ui/v2/dialog-v2` + `useDialog()`；账户按钮（补丁 07 layout.tsx）点击
-  `dialog.show(() => <CxDialogAccount/>)`；`cx://` 导入深链复用 opencode 既有 deep-link
-  分发，在 layout.tsx 的 `handleDeepLinks` 内解析后经 `useCxImportDialog` 弹确认框。
-  跨包类型缺口（`window.api.channelKeys*` / `import.meta.env.NEWAPI_*`）在 cx 目录内
+  `@opencode-ai/ui/v2/dialog-v2` + `useDialog()`，配色全走 v2 语义变量（`--v2-*`）、
+  跟随明暗主题、与原生设置页视觉统一（不再自绘浮层 / 不再硬编码颜色）。账户按钮
+  （补丁 07 layout.tsx）点击 `dialog.show(() => <CxDialogAccount/>)`；首启无 key 时
+  （补丁 07 FR-3.6）自动弹出面板并展开 `AddKeyForm`（仅 desktop、仅一次）；`cx://`
+  导入深链复用 opencode 既有 deep-link 分发，在 layout.tsx 的 `handleDeepLinks` 内解析后
+  弹 `CxDialogImport` 确认框（自闭合，走 `useDialog().close()`）。`AddKeyForm` 隐藏可选
+  baseURL 输入（FR-3.5），新增 key 的 `baseURL` 固定空串、走构建期内置 `NEWAPI_BASE_URL`
+  回退。跨包类型缺口（`window.api.channelKeys*` / `import.meta.env.NEWAPI_*`）在 cx 目录内
   用局部声明 + 断言访问器解决，不碰上游类型文件。旧 desktop 面板 `balance-panel.tsx`
   与 `renderer/index.tsx` 挂载已删除（原补丁 01 作废）。双包 typecheck 通过、补丁可干净重放。
 - cx 自动更新指向本仓库发布（补丁 08 + release.yml + brand 配置）
@@ -32,11 +35,16 @@
   鉴权中间件由 `sk-` 定位本人 profile，`user_id` 只从 token 记录派生、不读任何入参；返回
   `username`/`avatar`/`quota`（=`user.quota + user.used_quota`）/`used_quota`/`token_remain`/
   `token_used`/`token_used_today`/`unlimited`，可选 `used_today`（聚合失败时省略，App 端显示「—」）。
-  客户端 `cx-account` 面板已联调闭合链路（US-004 / US-005 / US-006 / US-007）。契约见
-  `brand/docs/api-app-profile.md`。
+  客户端 `cx-account` 面板已联调闭合链路（US-004 / US-005 / US-006 / US-007）。
 - **`/v1/models` 已按 token `model_limits` 过滤**：经查 new-api 源码确认 `GET /v1/models` 按
   key 返回该 key 可用模型（`TokenAuth` 注入 model_limits → `ListModels` 过滤），App 端切换 key
-  直接用 `/v1/models`，无需新增 `/api/app/models`（US-008，证据链见契约文档第 6 节）。
+  直接用 `/v1/models`，无需新增 `/api/app/models`（US-008）。
+- **账户面板 UI 审查（US-012.5，无头可查项已完成）**：修复三处实缺陷——① CSS 选择器与
+  TSX 的 `data-slot` 全面对齐（此前 CSS 全用类选择器、TSX 用 data-slot，几乎全部规则失配，
+  面板近乎无样式）；② `AddKeyForm` 隐藏 baseURL 输入（FR-3.5）；③ 补齐首启无 key 自动弹出
+  （FR-3.6）。并核对：`aria-label` 全覆盖、状态分支（加载/错误/就绪/切换/空态）齐全、
+  可视文案无英文残留、15 个 `--v2-*` 变量与 `progress-circle-v2` / `dialog-body` 的
+  data-slot 均在上游 v2 定义中实在。**实机目视项待跑**（见待办第 2 节）。
 
 ---
 
@@ -44,22 +52,28 @@
 
 ### 1. 自动更新端到端验证（程序化预检已过；三平台实机待跑）
 
-自更新链路（补丁 08 + publish 源 + latest*.yml 合并）代码已就位。US-011 完成了**全链路程序化预检（全绿）**并固化了可复现的验证手册 `brand/docs/self-update-e2e.md`：
+自更新链路（补丁 08 + publish 源 + latest*.yml 合并）代码已就位，全链路程序化预检全绿：
 
-- ✅ 更新源指向本仓库：`brand/electron-builder.brand.ts` 的 `publish` 覆盖上游 `anomalyco/opencode` → `Ruk1ng001/opencode-desktop`（打进产物 `app-update.yml`）；全仓无残留官方更新源引用 → 不弹官方 opencode 更新（AC#3）。
+- ✅ 更新源指向本仓库：`brand/electron-builder.brand.ts` 的 `publish` 覆盖上游 `anomalyco/opencode` → `Ruk1ng001/opencode-desktop`（打进产物 `app-update.yml`）；全仓无残留官方更新源引用 → 不弹官方 opencode 更新。
 - ✅ feed 解析：`updater.ts` `allowPrerelease=true` 走 releases.atom 按 `cx` 分量匹配 `-cx.N`；线上 atom feed 实测可解出最新 cx tag，旧→新数值递增可检出。
-- ✅ 自更新载体齐全：完整三平台 release（cx.7）的 mac=zip / win=exe / linux=AppImage 全部 HEAD 200 可达，`latest*.yml`（sha512/size）完整（AC#2）。
-- ⚠️ **发布态阻塞**：最新的 cx.8/cx.9 是「临时只打 Windows+mac-x64」时期产物，缺 linux / mac-arm64（cx.9 `latest-linux.yml` 返回 404）。实机验证必须用 US-009 恢复四平台矩阵后**连发的两个完整三平台版本**，不能用 cx.8/cx.9。
+- ✅ 自更新载体：完整三平台 release 的 mac=zip / win=exe / linux=AppImage 全部可达，`latest*.yml`（sha512/size）完整。
+- ⚠️ **发布态注意**：早期 cx.8/cx.9 是「临时只打 Windows+mac-x64」时期产物，缺 linux / mac-arm64。实机验证必须用恢复四平台矩阵后**连发的两个完整三平台版本**。
 
-**仍未完成（不可在无头 CI/服务器环境替代）**：三平台真机实测（装旧版 → 发新版 → 肉眼确认检测/下载/安装/启动新版本；mac 走 zip、win 走 exe、linux 走 AppImage）。手册第 4 节给出逐平台操作步骤与判定标准；按 AC#5，三平台全部通过前不推正式发布。
+**仍未完成（不可在无头 CI/服务器环境替代）**：三平台真机实测（装旧版 → 发新版 → 肉眼确认检测/下载/安装/启动新版本；mac 走 zip、win 走 exe、linux 走 AppImage）。三平台全部通过前不推正式发布。
 
-### 2. UI 审查与优化（US-012.5，未执行）
+### 2. 账户面板实机目视审查（US-012.5 剩余项）
 
-本轮触及的界面（账户面板两栏布局、`AddKeyForm`、首启自动弹出引导框、`cx://` 深链导入确认框、默认中文文案）需在推送前经过一轮统一 UI 审查与打磨。PRD 的 US-012.5 八条 AC 目前全部未勾选、progress.md 无对应记录，即**此审查尚未执行**。审查需覆盖视觉一致性、中文文案完整性（无英文残留/截断/溢出）、交互状态（加载/空态/错误 404·401·500/unlimited/used_today 缺失显「—」）、可访问性基础项（`aria-label` / 键盘可达 / 对比度）、最小窗口响应式，并逐条列出并修复发现的问题。改动须集中在 `packages/app/src/components/cx-account/`，双包 typecheck 通过、补丁可干净重放。
+无头环境可机检的项已在「已完成」段完成。剩余需真机 `npm run dev` 目视确认：
 
-### 3. 推送发布（US-013，前置门槛未全过，暂不推送）
+- **本次全面重构了 CSS**（类选择器 → data-slot），务必目视确认面板两栏布局、环形图、
+  key 卡片列表在真机正确渲染、无错位。
+- 对比度、窄窗口/最小窗口下文案换行与不溢出、滚动正常。
+- 首启自动弹出（FR-3.6）、隐藏 baseURL 后表单无残留空隙（FR-3.5）在真机的实际观感。
+- 各交互状态（加载 / 空态 / 错误 404·401·500 / `unlimited` / `used_today` 缺失显「—」）在真实或模拟数据下的渲染。
 
-推送门禁清单见 `brand/docs/push-gate.md`。本轮重新实测技术门槛：双包 typecheck ✅（desktop/app 各 rc=0）/ 补丁 0 冲突重放 ✅（9 补丁全 OK+APPLIED）/ CI 4 平台矩阵 ✅ / 敏感值不入库 ✅ 均已通过。未过两项：**UI 审查（US-012.5）—— 硬阻塞**（PRD 8 条 AC 全未勾、无实现记录，从未执行）；**自动更新三平台实机验证（US-011）—— 证据不足**（PRD 已标 `done`，但 `self-update-e2e.md` B.4 实机结论表四行仍全「待验」、实机确未回填，无头服务器无法真机 QA，不凭 PRD 状态位单方认定已过）。按 AC#5「任一前置门槛未过，不执行推送」，本轮**不推送**。两项门槛过关后方可走特性分支推送 + CI 自动合并发布流程。
+### 3. 推送发布（前置门槛未全过，暂不推送正式版）
+
+推送前置门槛：双包 typecheck ✅（desktop/app 各 rc=0）/ 补丁 0 冲突重放 ✅ / CI 4 平台矩阵 ✅ / 敏感值不入库 ✅ 均已通过。未过两项：**账户面板实机目视审查（待办第 2 节）**、**自动更新三平台实机验证（待办第 1 节）**——两者都需真机、无头服务器无法替代完成。两项门槛过关后方可走特性分支推送 + CI 自动合并发布正式版流程。
 
 ---
 
