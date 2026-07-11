@@ -44,9 +44,16 @@ App 默认 locale 设为中文（当前默认英文）。查 renderer 初始化 
 - [ ] 可选字段 `used_today`（账户级今日消耗，按 user_id 聚合当天日志）；未实现时省略，前端显示「—」。
 - [ ] 确认 `/v1/models` 是否按 token `model_limits` 过滤返回该 key 可用模型；若不过滤，追加 `GET /api/app/models`（契约文档第 6 节）。
 
-### 3. 自动更新端到端验证（未验证）
+### 3. 自动更新端到端验证（程序化预检已过；三平台实机待跑）
 
-自更新链路（补丁 08 + publish 源 + latest*.yml 合并）代码已就位，但**从未实机验证**。需连发两个版本实测：装旧版 → 发新版 → 确认能检测、下载、安装。三平台分别验（mac 走 zip、win 走 exe、linux 走 AppImage）。
+自更新链路（补丁 08 + publish 源 + latest*.yml 合并）代码已就位。US-011 完成了**全链路程序化预检（全绿）**并固化了可复现的验证手册 `brand/docs/self-update-e2e.md`：
+
+- ✅ 更新源指向本仓库：`brand/electron-builder.brand.ts` 的 `publish` 覆盖上游 `anomalyco/opencode` → `Ruk1ng001/opencode-desktop`（打进产物 `app-update.yml`）；全仓无残留官方更新源引用 → 不弹官方 opencode 更新（AC#3）。
+- ✅ feed 解析：`updater.ts` `allowPrerelease=true` 走 releases.atom 按 `cx` 分量匹配 `-cx.N`；线上 atom feed 实测可解出最新 cx tag，旧→新数值递增可检出。
+- ✅ 自更新载体齐全：完整三平台 release（cx.7）的 mac=zip / win=exe / linux=AppImage 全部 HEAD 200 可达，`latest*.yml`（sha512/size）完整（AC#2）。
+- ⚠️ **发布态阻塞**：最新的 cx.8/cx.9 是「临时只打 Windows+mac-x64」时期产物，缺 linux / mac-arm64（cx.9 `latest-linux.yml` 返回 404）。实机验证必须用 US-009 恢复四平台矩阵后**连发的两个完整三平台版本**，不能用 cx.8/cx.9。
+
+**仍未完成（不可在无头 CI/服务器环境替代）**：三平台真机实测（装旧版 → 发新版 → 肉眼确认检测/下载/安装/启动新版本；mac 走 zip、win 走 exe、linux 走 AppImage）。手册第 4 节给出逐平台操作步骤与判定标准；按 AC#5，三平台全部通过前不推正式发布。
 
 ---
 
