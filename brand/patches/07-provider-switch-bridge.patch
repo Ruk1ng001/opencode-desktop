@@ -1,31 +1,3 @@
-# provider 切换桥 + 侧边栏账户入口（多 provider 改造）：
-#   本补丁是补丁层首次触碰 @opencode-ai/app 包（此前 01-06 只改 desktop 包）。改动极小、
-#   均为薄叠加，跟随上游升级时重放即可。三个文件：
-#
-#   1. directory-layout.tsx —— 在 LocalProvider 作用域内挂一个极小的 CxProviderSwitchBridge
-#      组件。账户面板（BalanceLauncher）挂在 opencode 组件树之外、够不到承载 model 选择状态的
-#      useLocal()，故用 window CustomEvent `cx:select-provider`（detail:{providerID,modelID}）
-#      搭桥：面板派发事件 → 本组件收到 → 调 useLocal().model.set(...)（与原生 model 选择器同一
-#      入口）→ 当前会话切到该 provider。纯请求级、零重启，效果同原生切换「闪一下」。复用仓库已有
-#      的 deep-link 事件桥同款模式（renderer index.tsx 派发 ↔ layout.tsx 监听）。
-#      providerID 由 channelProviderId(key.id)=`newapi-<id前8位>` 算出（见 04 的 store-channel-keys），
-#      与主进程 server.ts 注入的 provider id 完全一致——写错则事件匹配不到 provider，切换不生效。
-#
-#   2. layout.tsx —— 侧边栏底部（settings / help 同排）增加账户入口按钮，仅桌面端渲染
-#      （platform.platform==="desktop"）。点击派发 window CustomEvent `cx:open-account`，由树外的
-#      BalanceLauncher（desktop 包）接管弹面板。用字符串事件解耦，避免 app 包反向依赖 desktop 包。
-#
-#   3. sidebar-shell.tsx —— SidebarContent 增加可选 prop renderAccountButton（不传即不渲染），
-#      渲染在底部设置齿轮上方，供 layout.tsx 注入桌面账户入口。
-#
-# 依赖：独立于 01-06；三个文件均属 @opencode-ai/app 包。切换生效前提是「目标 key 已被主进程
-#       注入成运行中内核的 provider」（见 03 的 buildChannelConfigContent 多 provider 注入）——
-#       新增/删除 key 改变了 provider 集合，仍需重启一次让新 provider 注册；已注入 key 之间切换零重启。
-[07-provider-switch-bridge]
-packages/app/src/pages/directory-layout.tsx
-packages/app/src/pages/layout.tsx
-packages/app/src/pages/layout/sidebar-shell.tsx
-
 diff --git a/packages/app/src/pages/directory-layout.tsx b/packages/app/src/pages/directory-layout.tsx
 index 77c120e57..eff51d9cf 100644
 --- a/packages/app/src/pages/directory-layout.tsx
@@ -80,17 +52,41 @@ index 77c120e57..eff51d9cf 100644
  export type ProjectDirString = Schema.Schema.Type<typeof ProjectDirString>
  
 diff --git a/packages/app/src/pages/layout.tsx b/packages/app/src/pages/layout.tsx
-index fd9d16b90..1a207c0ee 100644
+index fd9d16b90..037f340da 100644
 --- a/packages/app/src/pages/layout.tsx
 +++ b/packages/app/src/pages/layout.tsx
-@@ -2239,6 +2239,24 @@ export default function LegacyLayout(props: ParentProps) {
+@@ -1256,6 +1256,22 @@ export default function LegacyLayout(props: ParentProps) {
+   }
+ 
+   const handleDeepLinks = (urls: string[]) => {
++    // [cx] US-013: cx:// 一键导入深链。放在 server.isLocal() guard 之前——导入 key 与本地
++    // server 无关，任何 server 环境都应响应。解析出第一条有效 cx:// 后弹导入确认框（不静默写入，
++    // 见 cx-account-import）；面板/确认框依赖 desktop preload 的 window.api，故仅桌面端处理。
++    if (platform.platform === "desktop") {
++      void import("@/components/cx-account/cx-account-api").then((api) => {
++        for (const url of urls) {
++          const req = api.parseImportDeepLink(url)
++          if (!req) continue
++          void import("@/components/cx-account/cx-account-import").then((x) => {
++            dialog.show(() => <x.CxDialogImport request={req} />)
++          })
++          break
++        }
++      })
++    }
++
+     if (!server.isLocal()) return
+ 
+     for (const directory of collectOpenProjectDeepLinks(urls)) {
+@@ -2239,6 +2255,29 @@ export default function LegacyLayout(props: ParentProps) {
        onOpenSettings={openSettings}
        helpLabel={() => language.t("sidebar.help")}
        onOpenHelp={() => platform.openLink("https://opencode.ai/desktop-feedback")}
 +      renderAccountButton={
-+        // [cx] 桌面端账户入口：挂在侧边栏底部（settings / help 同排），点击派发
-+        // cx:open-account 事件，由树外的 BalanceLauncher（desktop 包）接管弹面板。
-+        // 用字符串事件解耦，避免 app 包反向依赖 desktop 包。web 端不渲染。
++        // [cx] 桌面端账户入口：挂在侧边栏底部（settings / help 同排），点击用同作用域的
++        // useDialog() 直接弹出账户面板（面板已迁入 app 包，见 cx-account/）。动态 import
++        // 避免首屏加载面板代码，与上游其它 dialog（settings / connect-provider）同款懒加载。
++        // web 端不渲染（platform !== desktop），账户面板依赖 desktop preload 的 window.api。
 +        platform.platform === "desktop"
 +          ? () => (
 +              <Tooltip placement={mobile ? "bottom" : "right"} value="账户">
@@ -99,7 +95,11 @@ index fd9d16b90..1a207c0ee 100644
 +                  variant="ghost"
 +                  size="large"
 +                  aria-label="账户"
-+                  onClick={() => window.dispatchEvent(new CustomEvent("cx:open-account"))}
++                  onClick={() => {
++                    void import("@/components/cx-account/cx-account-dialog").then((x) => {
++                      dialog.show(() => <x.CxDialogAccount />)
++                    })
++                  }}
 +                />
 +              </Tooltip>
 +            )

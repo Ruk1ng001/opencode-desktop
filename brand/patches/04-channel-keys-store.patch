@@ -69,7 +69,7 @@ index 000000000..deef7f087
 +const EMPTY_STATE: ChannelKeysState = { keys: [], activeKeyId: null }
 +
 +// [cx] 多 provider：由 key.id 派生稳定的 opencode providerID。主进程（server.ts 构造 config）
-+// 与 renderer（balance-panel 派发切换事件）两侧都用此函数，保证同一 key 算出同一 providerID，
++// 与 renderer（cx-account 面板派发切换事件）两侧都用此函数，保证同一 key 算出同一 providerID，
 +// 桥接切换才能命中正确 provider。取 id 前 8 位即可（randomUUID 前 8 位碰撞概率可忽略），
 +// 前缀 newapi- 便于识别来源。providerID 只允许 [a-z0-9-]，UUID 片段天然满足。
 +export function channelProviderId(keyId: string): string {

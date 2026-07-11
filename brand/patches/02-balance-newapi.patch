@@ -2,10 +2,15 @@ diff --git a/packages/desktop/electron.vite.config.ts b/packages/desktop/electro
 index 5d25be209..6a311bf04 100644
 --- a/packages/desktop/electron.vite.config.ts
 +++ b/packages/desktop/electron.vite.config.ts
-@@ -14,6 +14,21 @@ const channel = (() => {
+@@ -14,6 +14,27 @@ const channel = (() => {
  
  const nodePtyPkg = `@lydell/node-pty-${process.platform}-${process.arch}`
  
++// [cx] US-003: 默认 locale 由品牌配置集中控制；缺失或非字符串时回退中文。
++// renderer 运行时无法读取父仓库 brand.json，故在构建期注入 import.meta.env。
++const brandConfig = await import("../../../brand/brand.json", { with: { type: "json" } })
++const DEFAULT_LOCALE = typeof brandConfig.default.defaultLocale === "string" ? brandConfig.default.defaultLocale : "zh"
++
 +// [cx] 内置默认渠道地址：未配置 NEWAPI_BASE_URL 时（如未设 CI Secret），回退到内置中转站。
 +// 必须带 /v1（OpenAI 兼容路径）：openai-compatible SDK 以 <base>/chat/completions 发请求，
 +// 模型查询走 <base>/models（见 balance-panel 的 deriveModelsUrl）。配了 Secret 则以 Secret 为准。
@@ -15,6 +20,7 @@ index 5d25be209..6a311bf04 100644
 +// process.env）。baseURL 缺失回退内置默认；key 缺失即空串，余额面板据此显示「未配置凭据」态。
 +// 凭据仅内联到打包产物，与上游 OPENCODE_CHANNEL / VITE_SENTRY_* 的 define 注入方式一致。
 +const newapiDefine = {
++  "import.meta.env.DEFAULT_LOCALE": JSON.stringify(DEFAULT_LOCALE),
 +  "import.meta.env.NEWAPI_BASE_URL": JSON.stringify(process.env.NEWAPI_BASE_URL || DEFAULT_NEWAPI_BASE_URL),
 +  "import.meta.env.NEWAPI_API_KEY": JSON.stringify(process.env.NEWAPI_API_KEY ?? ""),
 +  // [cx] US-007: 充值页面 URL。缺省时余额面板回退到由 NEWAPI_BASE_URL 推导的站点根。
@@ -24,7 +30,7 @@ index 5d25be209..6a311bf04 100644
  const sentry =
    process.env.SENTRY_AUTH_TOKEN && process.env.SENTRY_ORG && process.env.SENTRY_PROJECT
      ? sentryVitePlugin({
-@@ -91,6 +106,10 @@ const require = __cjs_mod__.createRequire(import.meta.url);
+@@ -91,6 +112,10 @@ const require = __cjs_mod__.createRequire(import.meta.url);
      },
    },
    renderer: {
@@ -39,10 +45,14 @@ diff --git a/packages/desktop/src/renderer/env.d.ts b/packages/desktop/src/rende
 index 6dff3baf1..0e7beabc4 100644
 --- a/packages/desktop/src/renderer/env.d.ts
 +++ b/packages/desktop/src/renderer/env.d.ts
-@@ -1,6 +1,14 @@
+@@ -1,6 +1,18 @@
  import type { ElectronAPI } from "../preload/types"
  
  declare global {
++  // [cx] US-003: 品牌层默认 locale，经 renderer.define 在构建期注入。
++  interface ImportMetaEnv {
++    readonly DEFAULT_LOCALE: string
++  }
 +  // [cx] US-006: 声明构建期由 electron.vite renderer.define 注入的渠道变量
 +  // （复用 US-003 的 NEWAPI_BASE_URL / NEWAPI_API_KEY）。未注入时为空串。
 +  // [cx] US-007: NEWAPI_TOPUP_URL —— 充值页面地址，缺省时余额面板回退到站点根。

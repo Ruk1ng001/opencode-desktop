@@ -8,7 +8,7 @@
 | 路径 | 作用 | 是否含真实值 |
 |---|---|---|
 | `BASE_TAG` / `BASE_SHA` | 上游基线双文件：锁定的上游 tag 与对应 commit SHA，二者同步更新。 | 否 |
-| `brand.json` | 品牌配置：产品名、appId、命令名、渠道展示名、默认模型等**非密钥**定制值，是品牌值的单一数据源。 | 否 |
+| `brand.json` | 品牌配置：产品名、appId、命令名、渠道展示名、默认模型、默认 locale 等**非密钥**定制值，是品牌值的单一数据源。`defaultLocale` 未配置或不是字符串时，构建期回退为 `zh`。 | 否 |
 | `electron-builder.brand.ts` | 品牌打包覆盖：import 上游 `electron-builder.config.ts` 后 spread 覆盖 `productName` / `appId` / 图标路径 / 由 appId 派生的 Linux 身份，不碰上游源码。 | 否 |
 | `opencode.template.json` | 内置渠道模板：opencode.json 格式，`provider.newapi` 走 `@ai-sdk/openai-compatible`（命中 `/v1/chat/completions`），含 opencode 原生 `{env:NEWAPI_BASE_URL}` / `{env:NEWAPI_API_KEY}` / `{env:NEWAPI_MODEL}` 占位，运行时替换。 | 否（仅占位符） |
 | `channel.env.example` | 渠道环境变量**示例**：列出所需变量名与假值，复制为 `channel.env` 后填真实值本地使用。 | 否（仅示例值） |

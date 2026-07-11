@@ -7,63 +7,13 @@
 # 的 .patch，由 CI / 本机在 checkout 后重放，做到「submodule 锁上游 + 薄叠加层」。
 #
 # 应用（在 opencode/ 内，基线为 brand/BASE_SHA）：
-#   git -C opencode apply --3way brand/patches/01-balance-panel.patch
+#   git -C opencode apply --3way brand/patches/02-balance-newapi.patch
 # 导出（改动 opencode/ 后，在 opencode/ 内）：
 #   git -C opencode diff -- <文件...> > brand/patches/NN-<name>.patch
-
-# 独立账户面板（US-005 骨架 → US-006 接入 new-api 真实 profile → US-007 充值入口）：
-#   - 自包含面板组件（用户名/头像 / 账户额度 / 本 key 用量 / 充值，中文，仅依赖 solid-js）；
-#   - 在渲染入口挂载独立悬浮入口，位于聊天 UI 树之外，不改动任何既有聊天组件；
-#     US-007（入口移至左侧）：入口从右下角改到左下角，样式改为贴合原生的深色胶囊，
-#     并在入口按钮上展示当前激活 key 账户的头像/用户名（挂载时拉一次 profile，仅 ready
-#     态用真实身份，其余态回退静态「账户」文字），点击仍打开完整面板。
-#   - US-006 起：打开面板时带该 key 的 sk- 调 new-api GET /api/app/profile（走 token 鉴权
-#     中间件，替换旧的 /api/user/self——后者用 API Token 鉴权会失败），解析
-#     username/avatar/quota/used_quota/token_remain/token_used/token_used_today/unlimited，
-#     额度按 QUOTA_PER_UNIT 换算显示、unlimited 显示「不限额」，含加载中 / 请求失败 /
-#     未配置凭据 / 就绪四态；契约见 brand/docs/api-app-profile.md。
-#   - US-007/US-010 充值入口：「充值」按钮点击经 window.api.openLink（→ 主进程 shell.openExternal）
-#     在系统默认浏览器打开充值页面；URL 优先走注入变量 NEWAPI_TOPUP_URL，缺省回退到「由当前
-#     激活 key 的 baseURL 推导的站点根」（US-010：派生函数随切换激活 key 响应式变化，activeBaseURL
-#     为空再回退构建期 NEWAPI_BASE_URL）；两者都缺失时按钮禁用并提示。客户端内不实现任何支付逻辑。
-#   - US-008（key 列表卡片 + 顶部账户汇总）：面板不再只看构建期单 key，而是经
-#     window.api.storeGet 读 US-003 本地 key 列表（04 的 channelKeys）。顶部汇总区展示
-#     激活 key 账户的头像/用户名/账户总额度/账户已用（进度条）+「一键刷新」；下方逐 key
-#     卡片，每张按各自 baseURL/key 独立调 /api/app/profile（不同 key 可能不同账户），
-#     展示 label / 打码 key（maskKey）/ 该 key 已消耗 / 今日消耗 / 该账户头像+用户名，
-#     激活卡片有选中态（高亮边框 + 徽章）。本地无 key 时回退构建期注入变量合成单条。
-#   - US-009（增删改 key + 手动切换激活）：面板可管理本地 key 列表——新增 key（粘贴 sk-…，
-#     可选 label/baseURL，经 window.api.channelKeysAdd 写入）；删除 key（卡片内二次确认，经
-#     channelKeysRemove，删激活项时主进程侧激活回退首项/置空）；内联编辑 label（channelKeysUpdateLabel）；
-#     点击非激活卡片切换激活（channelKeysSetActive 更新 activeKeyId，随后带该 key 的 sk- 调
-#     /v1/models 拉可用模型经 channelKeysSetModels 落盘，供内核 config 注入可选模型）。因内核
-#     config 启动期一次性注入（US-002 结论：须重启 sidecar 才生效），切换/删激活后给出重启提示
-#     横幅（立即重启复用 window.api.relaunch，提醒会中断进行中的对话、聊天历史不受影响）。key
-#     明文输入（新增表单用 type=password）只在内存/本地 store 流转，不打印/不写日志，展示一律 maskKey 打码。
-#     key 管理全部走 05-channel-keys-ipc 的专用 IPC（不用通用 storeSet，那会破坏主进程对象读取）。
-#   - US-011（首启无 key 引导）：本地 key 列表为空且无内置默认 key（resolveKeyList 返回空数组、
-#     resolveActiveCreds 返回 null）时，面板空态从弱提示升级为明确引导（图标 + 标题「还没有可用的 key」
-#     + 说明），并直接展开新增 key 表单（AddKeyForm startOpen）——引导即进入 US-009 新增流程，无需二次
-#     点击；入口按钮同步切换为引导态（🔑「导入 key」+ 高亮样式），点击打开面板。有内置默认 key 或已有
-#     key 时不显示引导（走正常账户展示 / keys().length > 0 分支）。
-#   - US-012（失效自动切换 key）：常驻的 BalanceLauncher 独立订阅内核 sidecar 的 SSE 事件流
-#     /global/event（凭据来自 window.api.awaitInitialization()，Basic opencode:password），逐条解析
-#     session.error 事件，classifyKernelError 从 error（ProviderAuthError / APIError）识别「额度耗尽
-#     （402 / insufficient / quota / 余额 等）/ key 失效（401/403 / unauthorized / invalid key 等）」类
-#     可切换错误。命中后 handleKernelCallError 标记当前激活 key 失败（localStorage 带 TTL，防跨重启无限
-#     环），在「未失败、有凭据」的本地 key 里按列表顺序轮转挑下一个，channelKeysSetActive + 拉 /v1/models
-#     落盘后给顶部提示条（切到哪个 key + 立即重启，因 config 启动期一次性注入须重启生效，US-002）；所有
-#     key 都不可用时给红色「不再重试」提示。纯 renderer，不改上游聊天组件、不新增 IPC。
-#   - US-013（cx:// 深链一键导入）：BalanceLauncher 监听 renderer index.tsx 派发的
-#     opencode:deep-link CustomEvent（detail.urls），用 parseImportDeepLink 从中筛出 cx://
-#     导入链接（格式 cx://import-key?key=sk-…&label=…&baseURL=https://host/v1，校验 key 非空、
-#     baseURL 须为可解析 http(s) 否则丢弃回退内置）。命中后弹 ImportDialog 确认框（验收 #3：
-#     展示 label / 打码 key / baseURL，用户确认后才 channelKeysAdd 写入，避免恶意深链静默写入）；
-#     写入成功转「成功」态，提示可「设为激活」（验收 #4：channelKeysSetActive + 拉 /v1/models 落盘
-#     + 提示重启内核生效）。cx:// 协议注册在主进程（见 06-deeplink-cx），renderer 侧只解析/确认/写入。
-[01-balance-panel]
-packages/desktop/src/renderer/balance/balance-panel.tsx
-packages/desktop/src/renderer/index.tsx
+#
+# 补丁序号说明：01 原为 desktop 包内的独立账户面板（renderer/balance/balance-panel.tsx）。
+# 该面板已迁入 app 包、改用原生 v2 Dialog 外壳，见新补丁 09-cx-account-app；旧补丁 01 已删除，
+# 序号 01 空缺（保留其余补丁序号不变，避免重排）。
 
 # 余额面板凭据 / 充值地址注入（US-006 + US-007）：
 #   - 构建期把 US-003 注入的同名渠道变量（NEWAPI_BASE_URL / NEWAPI_API_KEY）经
@@ -71,6 +21,8 @@ packages/desktop/src/renderer/index.tsx
 #     读不到 process.env）；未注入时为空串，面板显示「未配置凭据」。不硬编码任何值。
 #   - US-007 追加 NEWAPI_TOPUP_URL（充值页面地址），同样经 renderer.define 注入。
 #   - env.d.ts 补上对应的 ImportMetaEnv 类型声明，保证 typecheck 通过。
+#   - 注：这些注入变量现由迁入 app 包的账户面板（09-cx-account-app，cx-account/*）读取；
+#     desktop 用 app/vite 编译 renderer，构建期 define 对 app 组件同样生效。
 [02-balance-newapi]
 packages/desktop/electron.vite.config.ts
 packages/desktop/src/renderer/env.d.ts
@@ -81,7 +33,7 @@ packages/desktop/src/renderer/env.d.ts
 #     作为「内置默认」回退值；server.ts 拼装一份 opencode config，经 OPENCODE_CONFIG_CONTENT
 #     传给内核 sidecar，使桌面产物开箱即走内置渠道。
 #   - US-004：token 来源改为读本地激活 key。buildChannelConfigContent() 的 baseURL / apiKey
-#     优先取本地激活 key（04-channel-keys-store 的 store-channel-keys，主进程侧 electron-store，
+#     优先取本地激活 key（04-channel-keys-store 的 store-channel-keys，主进程侧 electron-store,
 #     直接同步读、无需 IPC）；本地无激活 key 时回退构建期内置默认；两者都无则不注入、退回原生行为。
 #     model 无 per-key 字段，始终取构建期内置默认。切换激活 key 后须重启 sidecar 才生效（US-002）。
 #   - 内核 config 合并链里 OPENCODE_CONFIG_CONTENT 排在全局 / 项目配置之后，注入的
@@ -122,7 +74,7 @@ packages/desktop/src/main/store-keys.ts
 #   - 切换激活 key 后重启内核复用既有 window.api.relaunch（stopSidecars → app.relaunch，US-002
 #     结论：config 启动期一次性注入，换 key 必须重启才生效），本补丁不新增重启 IPC。
 #   - 安全底线：key 管理 handler 一律不打印任何入参（尤其 sk- 明文），仅透传给数据层。
-#   - 依赖：ipc.ts import 04 的 store-channel-keys；独立于 01/02/03 的文件，按 NN 序在其后应用。
+#   - 依赖：ipc.ts import 04 的 store-channel-keys；独立于 02/03 的文件，按 NN 序在其后应用。
 [05-channel-keys-ipc]
 packages/desktop/src/main/ipc.ts
 packages/desktop/src/preload/index.ts
@@ -135,24 +87,25 @@ packages/desktop/src/preload/types.ts
 #   - main/index.ts 两处改动：① app.setAsDefaultProtocolClient("cx")（紧邻上游 "opencode"
 #     注册）声明 cx:// 归本 App；② second-instance 的 argv 过滤追加识别 cx:// 前缀
 #     （macOS 的 open-url 不过滤 scheme，cx:// 天然可用，无需改）。
-#   - 解析 / 确认 / 写入全在 renderer 侧（01 补丁 balance-panel.tsx 的 parseImportDeepLink +
-#     ImportDialog）——主进程只注册协议与透传 URL，不碰 key 明文。独立于 01-05 的文件（仅改
-#     main/index.ts），按 NN 序在其后应用。
+#   - 解析 / 确认 / 写入全在 app 包侧（09 补丁 cx-account 的 parseImportDeepLink + CxDialogImport，
+#     由 layout.tsx 的 handleDeepLinks 接住 cx:// 链接后弹确认框）——主进程只注册协议与透传 URL，
+#     不碰 key 明文。独立于其余补丁的文件（仅改 main/index.ts），按 NN 序在其后应用。
 [06-deeplink-cx]
 packages/desktop/src/main/index.ts
 
-# provider 切换桥 + 侧边栏账户入口（多 provider 改造）：
-#   本补丁是补丁层首次触碰 @opencode-ai/app 包（此前 01-06 只改 desktop 包）。改动极小、
-#   均为薄叠加，跟随上游升级时重放即可。三个文件：
+# provider 切换桥 + 侧边栏账户入口 + 账户面板接线（多 provider 改造 + 账户面板迁移接线）：
+#   本补丁触碰 @opencode-ai/app 包（薄叠加，跟随上游升级时重放）。三个文件：
 #   - directory-layout.tsx：在 LocalProvider 作用域内挂一个极小的桥接组件
-#     CxProviderSwitchBridge。账户面板（BalanceLauncher）挂在 opencode 组件树之外、够不到
-#     useLocal()，故经 window CustomEvent `cx:select-provider`（detail:{providerID,modelID}）
-#     请求切换；桥接组件收到后调用与原生 model 选择器同一入口 useLocal().model.set(...)，把当前
-#     会话切到该 provider —— 纯请求级、零重启，效果同原生「闪一下」。复用仓库已有的 deep-link
-#     事件桥同款模式（index.tsx 派发 / layout.tsx 监听）。
-#   - layout.tsx：侧边栏底部（settings / help 同排）新增账户入口 IconButton（仅 desktop 平台
-#     渲染），点击派发 `cx:open-account` 事件，由树外的 BalanceLauncher（desktop 包）接管弹面板。
-#     用字符串事件解耦，避免 app 包反向依赖 desktop 包。
+#     CxProviderSwitchBridge。账户面板（CxDialogAccount）经原生 v2 Dialog 弹出、挂在 opencode
+#     组件树之外、够不到 useLocal()，故经 window CustomEvent `cx:select-provider`
+#     （detail:{providerID,modelID}）请求切换；桥接组件收到后调用与原生 model 选择器同一入口
+#     useLocal().model.set(...)，把当前会话切到该 provider —— 纯请求级、零重启，效果同原生「闪一下」。
+#   - layout.tsx：① 侧边栏底部（settings / help 同排）新增账户入口 IconButton（仅 desktop 平台
+#     渲染），点击用同作用域的 useDialog() 直接 dialog.show(() => <CxDialogAccount/>) 弹出账户面板
+#     （面板已迁入 app 包，见 09）；② handleDeepLinks 追加 cx:// 一键导入处理——复用 opencode 既有
+#     deep-link 分发（opencode:deep-link 事件 + 启动缓冲），解析出 cx:// 后动态 import cx-account-import
+#     并 dialog.show(() => <CxDialogImport request={req}/>) 弹导入确认框（不静默写入）。cx:// 处理放在
+#     server.isLocal() guard 之前（导入与本地 server 无关）。
 #   - sidebar-shell.tsx：SidebarContent 新增可选 slot renderAccountButton，渲染在底部设置齿轮
 #     上方；不传则不渲染（web 等平台不显示）。
 #
@@ -160,7 +113,7 @@ packages/desktop/src/main/index.ts
 #   channelProviderId）：每个本地 key 被注入成一个独立 opencode provider（providerID =
 #   channelProviderId(key.id) = `newapi-<id前8位>`），内核启动时同时握有全部 key 的 provider。
 #   在已注入的 key 之间切换是纯请求级（renderer model.set），零重启；只有新增/删除 key 改变了
-#   provider 集合，才需重启一次让新 provider 注册进内核（面板侧沿用 relaunch，仅此一处）。
+#   provider 集合，才需重启一次让新 provider 注册进内核。
 [07-provider-switch-bridge]
 packages/app/src/pages/directory-layout.tsx
 packages/app/src/pages/layout.tsx
@@ -175,14 +128,51 @@ packages/app/src/pages/layout/sidebar-shell.tsx
 [08-self-update-prerelease]
 packages/desktop/src/main/updater.ts
 
-# 首启默认中文 locale（US-001）：
+# 账户面板（app 包，原生 v2 Dialog + v2 语义变量）——承载 US-005 → US-013 的账户面板全部能力，
+# 由原 desktop 包 renderer/balance/balance-panel.tsx（自绘浮层 + 硬编码金色内联样式）迁入并用
+# 上游 v2 设计系统重写：
+#   本补丁是账户面板落在 @opencode-ai/app 包的实现，用原生
+#   @opencode-ai/ui/v2/dialog-v2（Dialog/DialogHeader/DialogBody）+ useDialog() 外壳，配色全走 v2
+#   语义变量（跟随明暗主题、与原生设置页视觉统一）；接线（账户按钮 dialog.show、cx:// 深链
+#   handleDeepLinks）在 07 补丁的 layout.tsx 内完成。低冲突原则：新文件独立目录
+#   packages/app/src/components/cx-account/，全部 Cx 前缀，避免与上游撞名 / 撞文件；对上游现有
+#   文件零改动（接线复用 07 已占的 layout.tsx，面板不再挂 desktop renderer/index.tsx）。
+#   跨包类型缺口（app 包看不到 desktop preload 的 window.api.channelKeys* / channelConfig* /
+#   import.meta.env.NEWAPI_*）在 cx-account-api.ts 内用局部 interface + 断言访问器解决，
+#   不碰上游类型文件（preload/types.ts、env.d.ts）；web 端无 window.api，全走可选链兜底。
+#   四个文件：
+#   - cx-account-api.ts：纯数据层（零 UI import，可离线 typecheck）——对接 new-api 取 profile
+#     （GET /api/app/profile，Bearer sk-）/ models（/v1/models）、读写本地 key 列表、解析 cx://
+#     深链（parseImportDeepLink）、providerID 派生（channelProviderId，须与 server.ts 一致）、
+#     单位换算 / 打码（maskKey）等纯函数与类型。跨包 window.api / import.meta.env 缺口在此用局部
+#     interface + 断言访问器（cxChannelApi / cxEnv）解决。全部网络请求包 try/catch，永不抛出。
+#   - cx-account.css：样式全部走上游 v2 语义变量（--v2-background-* / --v2-text-* / --v2-border-*
+#     / --v2-state-* / --v2-background-bg-accent 等），不硬编码任何颜色，跟随明暗主题、与原生设置页
+#     视觉统一。用 kebab-case 类名 + data-slot 选择器（贴合上游 xx-v2.css 写法）；@import 依赖的
+#     v2 组件 css。旧 desktop 面板的 84 处硬编码金色内联样式已全部退役。
+#   - cx-account-dialog.tsx：CxDialogAccount——v2 Dialog(size=large) 外壳（DialogHeader/DialogBody）
+#     + 两栏布局（左账户卡 ProgressCircleV2 环形图 + 充值 ButtonV2 + 用量小结，右 key 列表卡片）。
+#     含 US-008 逐 key profile、US-009 增删改切换（ButtonV2 + TextInputV2）、US-011 首启无 key 引导。
+#     KeyCard / AddKeyForm 为内部子组件。切换激活派发 cx:select-provider 事件，由 07 的
+#     CxProviderSwitchBridge 接住 → useLocal().model.set，零重启。用 useDialog() 弹出/关闭。
+#   - cx-account-import.tsx：CxDialogImport——US-013 cx:// 深链导入确认框（展示 label / 打码 key /
+#     baseURL，用户确认后才 channelKeysAdd 写入，避免恶意深链静默写入），写入成功可「设为激活」。
+#     同样用 v2 Dialog 外壳；自包含，用同栈 useDialog().close() 关闭自身（无需外层传 onClose）。
+#   依赖：接线在 07 的 layout.tsx（账户按钮 dialog.show(CxDialogAccount)、handleDeepLinks 解析 cx://
+#   后 dialog.show(CxDialogImport)）；运行时经 07 的 cx:select-provider 桥与 05 的 channelKeys* IPC
+#   协作。按 NN 序最后应用（仅新增 app 包文件，独立于其余补丁，对上游现有文件零改动）。
+[09-cx-account-app]
+packages/app/src/components/cx-account/cx-account-api.ts
+packages/app/src/components/cx-account/cx-account.css
+packages/app/src/components/cx-account/cx-account-dialog.tsx
+packages/app/src/components/cx-account/cx-account-import.tsx
+
+# 首启默认 locale（US-001 / US-003）：
+#   - 默认值单一来源为父仓库 brand/brand.json 的 defaultLocale；02 补丁在构建期读取并通过
+#     renderer.define 注入 import.meta.env.DEFAULT_LOCALE，配置缺失或非字符串时回退为 "zh"。
 #   - renderer/index.tsx 的 DesktopRoot.loadLocale：本地无语言存储（既无 opencode.global.dat
-#     的 language、也无 language.v1 legacy，raw 为空）时，从上游「return undefined → 退回英文兜底」
-#     改为默认加载中文——await loadLocaleDict("zh") 后返回 "zh"。薄叠加，只在 desktop 入口兜底
-#     默认值，不碰上游 i18n/index.ts 的 detectLocale / normalizeLocale。
-#   - 已存储语言时行为不变：raw 非空仍走原有解析（读取存储值优先），默认值不覆盖用户选择；
-#     用户在设置里切到其他语言后持久化到 opencode.global.dat 的 language，下次启动 raw 非空、
-#     不被中文默认值覆盖。
+#     的 language、也无 language.v1 legacy，raw 为空）时，normalize 后加载品牌默认 locale。
+#     已存储语言时行为不变，仍以用户选择为先。
 #   - 独立于其余补丁的文件（仅改 renderer/index.tsx，与 01/02-08 均不共享此改动点），按 NN 序最后应用。
 [10-default-locale-zh]
 packages/desktop/src/renderer/index.tsx

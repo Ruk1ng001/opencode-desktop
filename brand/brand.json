@@ -4,5 +4,6 @@
   "appId": "ai.cx.desktop",
   "binName": "cx",
   "channelName": "内置渠道",
-  "defaultModel": "gpt-5-codex"
+  "defaultModel": "gpt-5-codex",
+  "defaultLocale": "zh"
 }
