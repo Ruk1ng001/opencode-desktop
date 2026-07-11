@@ -148,12 +148,13 @@ packages/desktop/src/main/updater.ts
 #     interface + 断言访问器（cxChannelApi / cxEnv）解决。全部网络请求包 try/catch，永不抛出。
 #   - cx-account.css：样式全部走上游 v2 语义变量（--v2-background-* / --v2-text-* / --v2-border-*
 #     / --v2-state-* / --v2-background-bg-accent 等），不硬编码任何颜色，跟随明暗主题、与原生设置页
-#     视觉统一。用 kebab-case 类名 + data-slot 选择器（贴合上游 xx-v2.css 写法）；@import 依赖的
-#     v2 组件 css。旧 desktop 面板的 84 处硬编码金色内联样式已全部退役。
-#   - cx-account-dialog.tsx：CxDialogAccount——v2 Dialog(size=large) 外壳（DialogHeader/DialogBody）
-#     + 两栏布局（左账户卡 ProgressCircleV2 环形图 + 充值 ButtonV2 + 用量小结，右 key 列表卡片）。
-#     含 US-008 逐 key profile、US-009 增删改切换（ButtonV2 + TextInputV2）、US-011 首启无 key 引导。
-#     KeyCard / AddKeyForm 为内部子组件。切换激活派发 cx:select-provider 事件，由 07 的
+#     视觉统一。工作台采用固定头部 + 融合用量总览 + 独立可滚动 Keys 区，窄屏降级为单列；用
+#     kebab-case 类名 + data-slot 选择器（贴合上游 xx-v2.css 写法）。
+#   - cx-account-dialog.tsx：CxDialogAccount——v2 Dialog(size=x-large) 外壳（DialogHeader/DialogBody），
+#     账户余额和 Token 快照合并为单张总览卡：环形图表达账户额度使用率，指标网格同步展示账户消耗与
+#     Token 合计；下方 Keys 列表独立滚动。含 US-008 逐 key profile、US-009 增删改切换（ButtonV2 +
+#     TextInputV2）、US-011 首启无 key 引导。新增 Key 本地写入后立即反馈，远端名称 / 模型 / profile
+#     转后台同步，失败保留表单并显示错误。切换激活派发 cx:select-provider 事件，由 07 的
 #     CxProviderSwitchBridge 接住 → useLocal().model.set，零重启。用 useDialog() 弹出/关闭。
 #   - cx-account-import.tsx：CxDialogImport——US-013 cx:// 深链导入确认框（展示 label / 打码 key /
 #     baseURL，用户确认后才 channelKeysAdd 写入，避免恶意深链静默写入），写入成功可「设为激活」。

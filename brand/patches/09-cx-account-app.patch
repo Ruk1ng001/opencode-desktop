@@ -437,10 +437,10 @@ index 000000000..7e15bd44a
 +}
 diff --git a/packages/app/src/components/cx-account/cx-account-dialog.tsx b/packages/app/src/components/cx-account/cx-account-dialog.tsx
 new file mode 100644
-index 000000000..8d34d08c2
+index 000000000..acd4c6b08
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-account-dialog.tsx
-@@ -0,0 +1,733 @@
+@@ -0,0 +1,741 @@
 +// [cx] 账户面板（迁自 desktop 包 renderer/balance/balance-panel.tsx，US-005 → US-013）。
 +//
 +// 本文件是账户面板从 desktop 包迁入 @opencode-ai/app 包的落地：改用原生 v2 组件
@@ -697,12 +697,15 @@ index 000000000..8d34d08c2
 +      return
 +    }
 +    setSaving(true)
++    setError("")
 +    try {
 +      // [cx] FR-3.5: baseURL 输入不暴露给用户，固定为空串——底层 channelKeysAdd 收到空 baseURL
 +      // 时走构建期内置 NEWAPI_BASE_URL 回退（见 cx-account-api / 主进程 store）。数据契约不变。
 +      await props.onAdd({ label: label().trim(), key: k, baseURL: "" })
 +      reset()
 +      setOpen(false)
++    } catch (cause) {
++      setError(cause instanceof Error ? cause.message : "添加失败，请稍后重试")
 +    } finally {
 +      setSaving(false)
 +    }
@@ -722,8 +725,12 @@ index 000000000..8d34d08c2
 +          value={key()}
 +          type="password"
 +          autocomplete="off"
++          autofocus
 +          placeholder="API Key（sk-…，必填）"
 +          onInput={(e) => setKey(e.currentTarget.value)}
++          onKeyDown={(e) => {
++            if (e.key === "Enter" && !saving()) void submit()
++          }}
 +          aria-label="API Key"
 +        />
 +        <TextInputV2
@@ -840,47 +847,52 @@ index 000000000..8d34d08c2
 +  // [cx] 未填名称时：新增后用该 key 在 new-api 侧的 token 名称（/api/app/profile 的 token_name）
 +  // 一次性回填本地 label（后续不再与远端同步）；取名失败 / 远端也没名字时保持「未命名 key」占位。
 +  async function handleAdd(input: { label: string; key: string; baseURL: string }): Promise<void> {
++    setNotice("")
++    const addKey = cxChannelApi()?.channelKeysAdd
++    if (!addKey) throw new Error("当前环境无法保存 Key，请在桌面客户端中重试")
++
++    // channelKeysAdd 返回最新 ChannelKeysState 的 JSON，解析出新条目 id（按明文 key 反向匹配）。
 +    let addedId: string | undefined
 +    try {
-+      // channelKeysAdd 返回最新 ChannelKeysState 的 JSON，解析出新条目 id（按明文 key 反向匹配）。
-+      const raw = await cxChannelApi()?.channelKeysAdd?.(input)
-+      const state = raw ? (JSON.parse(raw) as { keys?: Array<{ id: string; key: string }> }) : { keys: [] }
++      const raw = await addKey(input)
++      const state = JSON.parse(raw) as { keys?: Array<{ id: string; key: string }> }
 +      const list = Array.isArray(state.keys) ? state.keys : []
 +      addedId = [...list].reverse().find((k) => k.key === input.key)?.id
 +    } catch {
-+      // 主进程写库正常不抛；即便异常也不应让面板崩溃。
++      throw new Error("Key 保存失败，请检查桌面客户端状态后重试")
 +    }
++    if (!addedId) throw new Error("未能确认新增的 Key，请重试")
++    const confirmedId = addedId
++
 +    // [cx] 只同步本地 key 元数据，保留既有 profile 缓存（其它 key 不重拉）。
 +    await reloadKeys()
 +    setAddingKey(false)
 +
-+    // [cx] 未填名称 → 从远端取 token 名称回填 label（仅一次）。用 reloadKeys 后已解析出有效
-+    // baseURL 的条目发起查询（表单里 baseURL 固定空串，回退构建期内置地址在此已解析）。
-+    if (addedId && !input.label.trim()) {
-+      const entry = keys().find((k) => k.id === addedId)
-+      if (entry) {
-+        const remoteName = await fetchTokenName(entry.baseURL, entry.key)
++    // 本地写入成功后立即结束提交，让表单即时收起；远端名称、模型和 profile 在后台同步，
++    // 避免网络慢时用户点击「添加」长时间看不到反馈。
++    setNotice(`已添加 ${input.label.trim() || "新 Key"}，账户数据正在同步。`)
++    const entrySnapshot = keys().find((k) => k.id === confirmedId)
++    void (async () => {
++      if (!input.label.trim() && entrySnapshot) {
++        const remoteName = await fetchTokenName(entrySnapshot.baseURL, entrySnapshot.key)
 +        if (remoteName) {
 +          try {
-+            await cxChannelApi()?.channelKeysUpdateLabel?.(addedId, remoteName)
++            await cxChannelApi()?.channelKeysUpdateLabel?.(confirmedId, remoteName)
++            await reloadKeys()
 +          } catch {
 +            // 回填失败不阻断：卡片仍显示「未命名 key」占位，可手动改名。
 +          }
-+          await reloadKeys()
 +        }
 +      }
-+    }
 +
-+    if (addedId) {
 +      try {
-+        await cxChannelApi()?.channelConfigRefreshKey?.(addedId)
++        await cxChannelApi()?.channelConfigRefreshKey?.(confirmedId)
 +      } catch {
 +        // 热重载失败不阻断；下次启动时文件配置仍会生效。
 +      }
-+      // [cx] 仅为新增项请求 profile（其它 key 缓存不动）。
-+      const entry = keys().find((k) => k.id === addedId)
-+      if (entry) void loadProfile(entry)
-+    }
++      const refreshedEntry = keys().find((k) => k.id === confirmedId) ?? entrySnapshot
++      if (refreshedEntry) void loadProfile(refreshedEntry)
++    })()
 +  }
 +
 +  // [cx] US-009: 保存 label —— 只更新本地列表，不重拉 profile（账户/token 数据未变）。
@@ -948,7 +960,7 @@ index 000000000..8d34d08c2
 +  }
 +
 +  return (
-+    <Dialog size="large">
++    <Dialog size="x-large" class="cx-account-dialog">
 +      <DialogHeader closeLabel="关闭">
 +        <DialogTitle>账户</DialogTitle>
 +      </DialogHeader>
@@ -1059,8 +1071,8 @@ index 000000000..8d34d08c2
 +                </div>
 +              </div>
 +
-+              {/* [cx] 账户 + Token 统计合并卡片：账户级（quota / used_quota / used_today，同账户所有
-+                  key 一致）与本地已加载 token 汇总放在同一卡片，用分隔线区分两组，避免与下方 key 卡重复。 */}
++              {/* [cx] 余额与 Token 指标合并为一张数据总览：环形图负责表达账户额度使用率，右侧指标把
++                  账户级与全部 Token 快照放在同一视觉层级，避免两套统计上下重复。 */}
 +              <Show
 +                when={
 +                  accountProfile()?.status === "ready"
@@ -1070,64 +1082,60 @@ index 000000000..8d34d08c2
 +                keyed
 +              >
 +                {(ready) => (
-+                  <div data-slot="cx-summary">
-+                    <div data-slot="cx-summary-group">
-+                      <div data-slot="cx-summary-group-head">
-+                        <span data-slot="cx-summary-group-title">账户余额</span>
++                  <section data-slot="cx-summary" aria-label="账户用量总览">
++                    <div data-slot="cx-usage-visual">
++                      <div
++                        data-slot="cx-usage-ring"
++                        style={`--cx-used: ${ready.unlimited ? 0 : usedPercent(ready.usedQuota, ready.quota)}`}
++                        role="img"
++                        aria-label={
++                          ready.unlimited
++                            ? "账户不限额"
++                            : `账户额度已使用 ${usedPercent(ready.usedQuota, ready.quota)}%`
++                        }
++                      >
++                        <div data-slot="cx-usage-ring-inner">
++                          <strong>{ready.unlimited ? "∞" : `${usedPercent(ready.usedQuota, ready.quota)}%`}</strong>
++                          <span>额度已用</span>
++                        </div>
 +                      </div>
-+                      <div data-slot="cx-summary-grid">
-+                        <div data-slot="cx-summary-item">
-+                          <span>可用余额</span>
-+                          <strong>
-+                            {ready.unlimited ? "不限额" : formatCurrency(Math.max(0, ready.quota - ready.usedQuota))}
-+                          </strong>
-+                          <small>{ready.unlimited ? "无额度限制" : `总额 ${formatCurrency(ready.quota)}`}</small>
-+                        </div>
-+                        <div data-slot="cx-summary-item">
-+                          <span>今日消耗</span>
-+                          <strong>{ready.usedToday === null ? "—" : formatCurrency(ready.usedToday)}</strong>
-+                          <small>{ready.usedToday === null ? "接口未提供" : "账户今日用量"}</small>
-+                        </div>
-+                        <div data-slot="cx-summary-item">
-+                          <span>累计消耗</span>
-+                          <strong>{formatCurrency(ready.usedQuota)}</strong>
-+                          <small>
-+                            {ready.unlimited ? "不限额账户" : `已使用 ${usedPercent(ready.usedQuota, ready.quota)}%`}
-+                          </small>
-+                        </div>
++                      <div data-slot="cx-usage-copy">
++                        <span>可用余额</span>
++                        <strong>
++                          {ready.unlimited ? "不限额" : formatCurrency(Math.max(0, ready.quota - ready.usedQuota))}
++                        </strong>
++                        <small>{ready.unlimited ? "无额度限制" : `账户总额 ${formatCurrency(ready.quota)}`}</small>
 +                      </div>
 +                    </div>
 +
-+                    {/* [cx] Token 统计：本地已加载 profile 的 token 级字段汇总（非趋势，仅当前快照）。 */}
-+                    <Show when={tokenSummary().loaded > 0}>
-+                      <div data-slot="cx-summary-group" data-divider="">
-+                        <div data-slot="cx-summary-group-head">
-+                          <span data-slot="cx-summary-group-title">Token 统计</span>
-+                          <span data-slot="cx-summary-group-note">
-+                            已载入 {tokenSummary().loaded} / {keys().length} 个 token
-+                            <Show when={tokenSummary().unlimited > 0}> · {tokenSummary().unlimited} 个不限额</Show>
-+                          </span>
++                    <div data-slot="cx-overview-metrics">
++                      <div data-slot="cx-overview-head">
++                        <span>用量概览</span>
++                        <small>
++                          已同步 {tokenSummary().loaded} / {keys().length} 个 Token
++                          <Show when={tokenSummary().unlimited > 0}> · {tokenSummary().unlimited} 个不限额</Show>
++                        </small>
++                      </div>
++                      <div data-slot="cx-overview-grid">
++                        <div data-slot="cx-overview-item">
++                          <span>账户今日消耗</span>
++                          <strong>{ready.usedToday === null ? "—" : formatCurrency(ready.usedToday)}</strong>
 +                        </div>
-+                        <div data-slot="cx-summary-grid">
-+                          <div data-slot="cx-summary-item">
-+                            <span>剩余额度合计</span>
-+                            <strong>{formatCurrency(tokenSummary().remaining)}</strong>
-+                            <small>全部 token 合计</small>
-+                          </div>
-+                          <div data-slot="cx-summary-item">
-+                            <span>今日 token 消耗</span>
-+                            <strong>{formatCurrency(tokenSummary().usedToday)}</strong>
-+                            <small>全部 token 合计</small>
-+                          </div>
-+                          <div data-slot="cx-summary-item">
-+                            <span>累计 token 消耗</span>
-+                            <strong>{formatCurrency(tokenSummary().used)}</strong>
-+                            <small>全部 token 合计</small>
-+                          </div>
++                        <div data-slot="cx-overview-item">
++                          <span>账户累计消耗</span>
++                          <strong>{formatCurrency(ready.usedQuota)}</strong>
++                        </div>
++                        <div data-slot="cx-overview-item">
++                          <span>Token 剩余合计</span>
++                          <strong>{formatCurrency(tokenSummary().remaining)}</strong>
++                        </div>
++                        <div data-slot="cx-overview-item">
++                          <span>Token 今日消耗</span>
++                          <strong>{formatCurrency(tokenSummary().usedToday)}</strong>
 +                        </div>
 +                      </div>
-+                    </Show>
-+                  </div>
++                    </div>
++                  </section>
 +                )}
 +              </Show>
 +
@@ -1355,37 +1363,49 @@ index 000000000..2a4abd208
 +export { CxDialogImport }
 diff --git a/packages/app/src/components/cx-account/cx-account.css b/packages/app/src/components/cx-account/cx-account.css
 new file mode 100644
-index 000000000..a5bba7cf3
+index 000000000..0f9c2cf3b
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-account.css
-@@ -0,0 +1,601 @@
+@@ -0,0 +1,733 @@
 +/* [cx] 账户工作台：完全复用 OpenCode v2 语义 token，不引入品牌外配色。 */
 +@import "@opencode-ai/ui/v2/button-v2.css";
 +@import "@opencode-ai/ui/v2/icon-button-v2.css";
 +@import "@opencode-ai/ui/v2/text-input-v2.css";
 +@import "@opencode-ai/ui/v2/tooltip-v2.css";
 +
-+/* [cx] .cx-account-body 即 dialog-body 本身；用 content 作用域选择器（0,3,0）压过
-+   dialog-v2.css 里 [dialog-content] [dialog-body] 的 overflow:hidden（0,2,0），
-+   让面板内容在固定高度弹窗内可滚动（Dialog 已去掉 fit 改固定 large 高度）。 */
++/* [cx] 账户弹窗使用固定工作台布局：头部与总览保持可见，仅 Keys 列表独立滚动。 */
++[data-slot="dialog-content"].cx-account-dialog {
++  overflow: hidden;
++}
++
 +[data-slot="dialog-content"] [data-slot="dialog-body"].cx-account-body {
 +  flex: 1;
 +  min-height: 0;
 +  padding: 0 24px 24px;
-+  overflow-y: auto;
-+  scrollbar-width: none;
-+}
-+
-+.cx-account-body::-webkit-scrollbar,
-+.cx-account-body [data-slot="cx-key-list"]::-webkit-scrollbar {
-+  display: none;
++  overflow: hidden;
 +}
 +
 +.cx-account-body [data-slot="cx-dashboard"] {
-+  display: flex;
++  display: grid;
++  height: 100%;
 +  min-width: 0;
-+  flex-direction: column;
-+  gap: 20px;
++  min-height: 0;
++  grid-template-rows: auto auto minmax(0, 1fr);
++  gap: 16px;
++}
++
++.cx-account-body [data-slot="cx-key-list"] {
++  scrollbar-color: var(--v2-border-border-base) transparent;
++  scrollbar-width: thin;
++}
++
++.cx-account-body [data-slot="cx-key-list"]::-webkit-scrollbar {
++  width: 6px;
++}
++
++.cx-account-body [data-slot="cx-key-list"]::-webkit-scrollbar-thumb {
++  border-radius: 99px;
++  background: var(--v2-border-border-base);
 +}
 +
 +.cx-account-body [data-slot="cx-dashboard-head"] {
@@ -1474,74 +1494,83 @@ index 000000000..a5bba7cf3
 +  gap: 8px;
 +}
 +
-+/* [cx] 账户 + Token 统计合并卡片：账户级（quota/used_quota/used_today，同账户所有 key
-+   一致）与本地已加载 token 汇总同卡，两组用分隔线区分，避免与下方 key 卡重复。 */
++/* [cx] 余额 + Token 融合总览：左侧环形额度图，右侧同一数据网格。 */
 +.cx-account-body [data-slot="cx-summary"] {
++  display: grid;
++  min-width: 0;
++  grid-template-columns: minmax(260px, 0.8fr) minmax(360px, 1.4fr);
 +  overflow: hidden;
-+  border-radius: 8px;
++  border-radius: 10px;
 +  background: var(--v2-background-bg-layer-01);
 +  box-shadow: inset 0 0 0 0.5px var(--v2-border-border-muted);
 +}
 +
-+.cx-account-body [data-slot="cx-summary-group"][data-divider] {
-+  border-top: 0.5px solid var(--v2-border-border-base);
-+}
-+
-+.cx-account-body [data-slot="cx-summary-group-head"] {
++.cx-account-body [data-slot="cx-usage-visual"] {
 +  display: flex;
-+  flex-wrap: wrap;
-+  align-items: baseline;
-+  justify-content: space-between;
-+  gap: 8px;
-+  padding: 14px 20px 0;
++  min-width: 0;
++  align-items: center;
++  gap: 18px;
++  padding: 18px 20px;
++  background: var(--v2-background-bg-layer-02);
 +}
 +
-+.cx-account-body [data-slot="cx-summary-group-title"] {
++.cx-account-body [data-slot="cx-usage-ring"] {
++  --cx-used: 0;
++  position: relative;
++  display: grid;
++  width: 96px;
++  height: 96px;
++  flex: 0 0 96px;
++  place-items: center;
++  border-radius: 50%;
++  background: conic-gradient(
++    var(--v2-background-bg-accent) calc(var(--cx-used) * 1%),
++    var(--v2-background-bg-layer-04) 0
++  );
++}
++
++.cx-account-body [data-slot="cx-usage-ring"]::after {
++  position: absolute;
++  inset: 8px;
++  border-radius: inherit;
++  background: var(--v2-background-bg-layer-02);
++  content: "";
++}
++
++.cx-account-body [data-slot="cx-usage-ring-inner"] {
++  position: relative;
++  z-index: 1;
++  display: flex;
++  flex-direction: column;
++  align-items: center;
++  gap: 4px;
++}
++
++.cx-account-body [data-slot="cx-usage-ring-inner"] > strong {
 +  color: var(--v2-text-text-base);
-+  font-size: 13px;
-+  font-weight: 530;
-+}
-+
-+.cx-account-body [data-slot="cx-summary-group-note"] {
-+  color: var(--v2-text-text-muted);
-+  font-size: 11px;
++  font-size: 20px;
++  font-weight: 640;
 +  font-variant-numeric: tabular-nums;
 +}
 +
-+.cx-account-body [data-slot="cx-summary-grid"] {
-+  display: grid;
-+  grid-template-columns: repeat(3, minmax(0, 1fr));
-+  padding: 12px 8px 16px;
++.cx-account-body [data-slot="cx-usage-ring-inner"] > span,
++.cx-account-body [data-slot="cx-usage-copy"] > span,
++.cx-account-body [data-slot="cx-usage-copy"] > small {
++  color: var(--v2-text-text-muted);
++  font-size: 10px;
 +}
 +
-+.cx-account-body [data-slot="cx-summary-item"] {
++.cx-account-body [data-slot="cx-usage-copy"] {
 +  display: flex;
 +  min-width: 0;
 +  flex-direction: column;
 +  gap: 6px;
-+  padding: 4px 12px;
-+  border-right: 0.5px solid var(--v2-border-border-base);
 +}
 +
-+.cx-account-body [data-slot="cx-summary-item"]:last-child {
-+  border-right: 0;
-+}
-+
-+.cx-account-body [data-slot="cx-summary-item"] > span,
-+.cx-account-body [data-slot="cx-summary-item"] > small {
-+  overflow: hidden;
-+  color: var(--v2-text-text-muted);
-+  font-size: 11px;
-+  font-weight: 440;
-+  line-height: 1;
-+  text-overflow: ellipsis;
-+  white-space: nowrap;
-+}
-+
-+.cx-account-body [data-slot="cx-summary-item"] > strong {
++.cx-account-body [data-slot="cx-usage-copy"] > strong {
 +  overflow: hidden;
 +  color: var(--v2-text-text-base);
-+  font-size: 19px;
++  font-size: 24px;
 +  font-weight: 640;
 +  line-height: 1.1;
 +  font-variant-numeric: tabular-nums;
@@ -1549,18 +1578,93 @@ index 000000000..a5bba7cf3
 +  white-space: nowrap;
 +}
 +
++.cx-account-body [data-slot="cx-overview-metrics"] {
++  min-width: 0;
++  padding: 16px 20px;
++}
++
++.cx-account-body [data-slot="cx-overview-head"] {
++  display: flex;
++  align-items: baseline;
++  justify-content: space-between;
++  gap: 12px;
++  margin-bottom: 12px;
++}
++
++.cx-account-body [data-slot="cx-overview-head"] > span {
++  color: var(--v2-text-text-base);
++  font-size: 12px;
++  font-weight: 530;
++}
++
++.cx-account-body [data-slot="cx-overview-head"] > small {
++  overflow: hidden;
++  color: var(--v2-text-text-muted);
++  font-size: 10px;
++  font-variant-numeric: tabular-nums;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++}
++
++.cx-account-body [data-slot="cx-overview-grid"] {
++  display: grid;
++  grid-template-columns: repeat(4, minmax(0, 1fr));
++}
++
++.cx-account-body [data-slot="cx-overview-item"] {
++  display: flex;
++  min-width: 0;
++  flex-direction: column;
++  gap: 7px;
++  padding: 3px 14px;
++  border-left: 0.5px solid var(--v2-border-border-base);
++}
++
++.cx-account-body [data-slot="cx-overview-item"]:first-child {
++  padding-left: 0;
++  border-left: 0;
++}
++
++.cx-account-body [data-slot="cx-overview-item"] > span {
++  overflow: hidden;
++  color: var(--v2-text-text-muted);
++  font-size: 10px;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++}
++
++.cx-account-body [data-slot="cx-overview-item"] > strong {
++  overflow: hidden;
++  color: var(--v2-text-text-base);
++  font-size: 15px;
++  font-weight: 590;
++  font-variant-numeric: tabular-nums;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++}
++
 +.cx-account-body [data-slot="cx-notice"] {
++  position: absolute;
++  z-index: 2;
++  right: 36px;
++  bottom: 34px;
++  max-width: 360px;
 +  padding: 10px 12px;
-+  border: 0.5px solid var(--v2-state-border-danger);
-+  border-radius: 6px;
-+  background: var(--v2-state-bg-danger);
-+  color: var(--v2-state-fg-danger);
++  border: 0.5px solid var(--v2-border-border-base);
++  border-radius: 7px;
++  background: var(--v2-background-bg-layer-03);
++  box-shadow: var(--v2-elevation-overlay);
++  color: var(--v2-text-text-base);
 +  font-size: 12px;
 +}
 +
 +.cx-account-body [data-slot="cx-key-col"] {
++  display: flex;
++  min-height: 0;
++  grid-row: 3;
++  flex-direction: column;
 +  overflow: hidden;
-+  border-radius: 8px;
++  border-radius: 10px;
 +  background: var(--v2-background-bg-layer-01);
 +  box-shadow: inset 0 0 0 0.5px var(--v2-border-border-muted);
 +}
@@ -1610,9 +1714,15 @@ index 000000000..a5bba7cf3
 +
 +.cx-account-body [data-slot="cx-key-list"] {
 +  display: grid;
++  min-height: 0;
++  flex: 1;
++  grid-auto-rows: max-content;
 +  grid-template-columns: repeat(2, minmax(0, 1fr));
++  align-content: start;
 +  gap: 12px;
-+  padding: 16px 20px;
++  padding: 16px 20px 20px;
++  overflow-y: auto;
++  overscroll-behavior: contain;
 +}
 +
 +.cx-account-body [data-slot="cx-key-card"] {
@@ -1925,13 +2035,28 @@ index 000000000..a5bba7cf3
 +    display: none;
 +  }
 +
-+  .cx-account-body [data-slot="cx-summary-grid"] {
++  .cx-account-body [data-slot="cx-summary"] {
 +    grid-template-columns: 1fr;
-+    padding: 8px 8px 12px;
 +  }
 +
-+  .cx-account-body [data-slot="cx-summary-item"] {
-+    border-right: 0;
++  .cx-account-body [data-slot="cx-usage-visual"] {
++    padding: 14px 16px;
++  }
++
++  .cx-account-body [data-slot="cx-usage-ring"] {
++    width: 76px;
++    height: 76px;
++    flex-basis: 76px;
++  }
++
++  .cx-account-body [data-slot="cx-overview-grid"] {
++    grid-template-columns: repeat(2, minmax(0, 1fr));
++    gap: 12px 0;
++  }
++
++  .cx-account-body [data-slot="cx-overview-item"]:nth-child(3) {
++    padding-left: 0;
++    border-left: 0;
 +  }
 +
 +  .cx-account-body [data-slot="cx-key-list"] {
@@ -1948,6 +2073,21 @@ index 000000000..a5bba7cf3
 +}
 +
 +@media (max-width: 480px) {
++  [data-slot="dialog-content"] [data-slot="dialog-body"].cx-account-body {
++    overflow-y: auto;
++  }
++
++  .cx-account-body [data-slot="cx-dashboard"] {
++    display: flex;
++    height: auto;
++    min-height: 100%;
++    flex-direction: column;
++  }
++
++  .cx-account-body [data-slot="cx-key-list"] {
++    max-height: 360px;
++  }
++
 +  .cx-account-body [data-slot="cx-dashboard-head"] {
 +    flex-direction: column;
 +  }
