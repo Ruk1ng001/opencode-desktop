@@ -499,10 +499,10 @@ index 000000000..e93c09034
 +}
 diff --git a/packages/app/src/components/cx-account/cx-account-dialog.tsx b/packages/app/src/components/cx-account/cx-account-dialog.tsx
 new file mode 100644
-index 000000000..18b80b4e9
+index 000000000..b69358f7c
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-account-dialog.tsx
-@@ -0,0 +1,753 @@
+@@ -0,0 +1,779 @@
 +// [cx] 账户面板（迁自 desktop 包 renderer/balance/balance-panel.tsx，US-005 → US-013）。
 +//
 +// 本文件是账户面板从 desktop 包迁入 @opencode-ai/app 包的落地：改用原生 v2 组件
@@ -579,16 +579,16 @@ index 000000000..18b80b4e9
 +  const clickable = () => manageable() && !props.entry.isActive && !props.switching
 +
 +  return (
-+    <div
++    <article
 +      data-slot="cx-key-card"
 +      data-active={props.entry.isActive ? "" : undefined}
 +      data-clickable={clickable() ? "" : undefined}
 +      onClick={() => {
-+        // 仅在「非激活、可管理、未切换中、未处于内联编辑」时，点击卡片切换激活。
++        // 仅在「非激活、可管理、未切换中、未处于内联编辑」时，点击列表项切换激活。
 +        if (clickable() && !editing()) props.onActivate(props.entry)
 +      }}
 +    >
-+      <div data-slot="cx-key-card-head">
++      <header data-slot="cx-key-card-head">
 +        <div data-slot="cx-key-card-title">
 +          <Show
 +            when={editing()}
@@ -599,7 +599,7 @@ index 000000000..18b80b4e9
 +              </>
 +            }
 +          >
-+            {/* 内联编辑 label —— 点击输入区不触发卡片切换。 */}
++            {/* 内联编辑 label —— 点击输入区不触发列表项切换。 */}
 +            <div onClick={(e) => e.stopPropagation()}>
 +              <TextInputV2
 +                value={labelDraft()}
@@ -613,7 +613,7 @@ index 000000000..18b80b4e9
 +        <Show when={props.entry.isActive}>
 +          <Tag data-slot="cx-active-tag">激活</Tag>
 +        </Show>
-+      </div>
++      </header>
 +
 +      <Switch>
 +        <Match when={props.switching && !props.entry.isActive}>
@@ -651,31 +651,33 @@ index 000000000..18b80b4e9
 +                  <strong>{formatCurrency(ready.keyUsedQuota)}</strong>
 +                </div>
 +                <div data-slot="cx-token-stat">
-+                  <span>可用模型</span>
++                  <span>模型</span>
 +                  <strong>{props.entry.models.length || "—"}</strong>
 +                </div>
 +              </div>
 +
-+              <Show when={!ready.keyUnlimitedQuota} fallback={<Tag data-slot="cx-unlimited-tag">额度不限</Tag>}>
-+                <div data-slot="cx-key-bar-row">
-+                  <div data-slot="cx-key-bar-track">
-+                    <div
-+                      data-slot="cx-key-bar-fill"
-+                      style={{ width: `${keyUsedPercent(ready.keyUsedQuota, ready.keyRemainingQuota)}%` }}
-+                    />
++              <div data-slot="cx-key-quota">
++                <Show when={!ready.keyUnlimitedQuota} fallback={<Tag data-slot="cx-unlimited-tag">额度不限</Tag>}>
++                  <div data-slot="cx-key-bar-row">
++                    <span>
++                      额度 {keyUsedPercent(ready.keyUsedQuota, ready.keyRemainingQuota)}% · 剩余{" "}
++                      {formatCurrency(ready.keyRemainingQuota)}
++                    </span>
++                    <div data-slot="cx-key-bar-track">
++                      <div
++                        data-slot="cx-key-bar-fill"
++                        style={{ width: `${keyUsedPercent(ready.keyUsedQuota, ready.keyRemainingQuota)}%` }}
++                      />
++                    </div>
 +                  </div>
-+                  <span>
-+                    额度 {keyUsedPercent(ready.keyUsedQuota, ready.keyRemainingQuota)}% · 剩余{" "}
-+                    {formatCurrency(ready.keyRemainingQuota)}
-+                  </span>
-+                </div>
-+              </Show>
++                </Show>
++              </div>
 +            </>
 +          )}
 +        </Match>
 +      </Switch>
 +
-+      {/* [cx] US-009: 卡片操作行——切换/编辑/删除。内置渠道条目（builtin）不可管理。 */}
++      {/* [cx] US-009: 紧凑操作区——文字仅保留激活，编辑/删除使用带提示的图标按钮。 */}
 +      <Show when={manageable()}>
 +        <div data-slot="cx-key-actions" onClick={(e) => e.stopPropagation()}>
 +          <Show
@@ -689,18 +691,30 @@ index 000000000..18b80b4e9
 +                    disabled={props.switching}
 +                    onClick={() => props.onActivate(props.entry)}
 +                  >
-+                    {props.switching ? "切换中…" : "切换为激活"}
++                    {props.switching ? "切换中…" : "激活"}
 +                  </ButtonV2>
 +                </Show>
-+                <ButtonV2 variant="neutral" size="small" onClick={startEdit}>
-+                  编辑名称
-+                </ButtonV2>
++                <TooltipV2 value="编辑名称" placement="top">
++                  <IconButtonV2
++                    aria-label="编辑名称"
++                    variant="neutral"
++                    size="small"
++                    onClick={startEdit}
++                    icon={<Icon name="edit" size="small" />}
++                  />
++                </TooltipV2>
 +                <Show
 +                  when={confirmingDelete()}
 +                  fallback={
-+                    <ButtonV2 variant="danger" size="small" onClick={() => setConfirmingDelete(true)}>
-+                      删除
-+                    </ButtonV2>
++                    <TooltipV2 value="删除 Key" placement="top">
++                      <IconButtonV2
++                        aria-label="删除 Key"
++                        variant="neutral"
++                        size="small"
++                        onClick={() => setConfirmingDelete(true)}
++                        icon={<Icon name="trash" size="small" />}
++                      />
++                    </TooltipV2>
 +                  }
 +                >
 +                  <span data-slot="cx-delete-confirm">确认删除？</span>
@@ -721,16 +735,28 @@ index 000000000..18b80b4e9
 +              </>
 +            }
 +          >
-+            <ButtonV2 variant="contrast" size="small" onClick={saveEdit}>
-+              保存
-+            </ButtonV2>
-+            <ButtonV2 variant="neutral" size="small" onClick={() => setEditing(false)}>
-+              取消
-+            </ButtonV2>
++            <TooltipV2 value="保存名称" placement="top">
++              <IconButtonV2
++                aria-label="保存名称"
++                variant="contrast"
++                size="small"
++                onClick={saveEdit}
++                icon={<Icon name="check-small" size="small" />}
++              />
++            </TooltipV2>
++            <TooltipV2 value="取消编辑" placement="top">
++              <IconButtonV2
++                aria-label="取消编辑"
++                variant="neutral"
++                size="small"
++                onClick={() => setEditing(false)}
++                icon={<Icon name="close" size="small" />}
++              />
++            </TooltipV2>
 +          </Show>
 +        </div>
 +      </Show>
-+    </div>
++    </article>
 +  )
 +}
 +
@@ -835,7 +861,7 @@ index 000000000..18b80b4e9
 +}
 +
 +// [cx] 账户面板主体。经 useDialog().show(() => <CxDialogAccount/>) 弹出（接线在 07 的 layout.tsx）。
-+// 用 v2 Dialog(size=large) 外壳组织账户摘要、token 统计与响应式 key 网格。
++// 用 v2 Dialog(size=large) 外壳组织账户摘要、token 统计与响应式紧凑 key 列表。
 +export function CxDialogAccount() {
 +  const [initializing, setInitializing] = createSignal(true)
 +  const [keys, setKeys] = createSignal<ResolvedKey[]>([])
@@ -1224,7 +1250,7 @@ index 000000000..18b80b4e9
 +                    <span data-slot="cx-key-count">{keys().length}</span>
 +                    <div data-slot="cx-key-col-tip">管理凭据、查看实际 Token 用量与模型能力</div>
 +                  </div>
-+                  {/* [cx] 新增按钮放在标题行右侧；展开表单在标题下、网格上方。 */}
++                  {/* [cx] 新增按钮放在标题行右侧；展开表单在标题下、紧凑列表上方。 */}
 +                  <ButtonV2 variant="neutral" size="small" icon="plus" onClick={() => setAddingKey((prev) => !prev)}>
 +                    新增 key
 +                  </ButtonV2>
@@ -1437,17 +1463,17 @@ index 000000000..2a4abd208
 +export { CxDialogImport }
 diff --git a/packages/app/src/components/cx-account/cx-account.css b/packages/app/src/components/cx-account/cx-account.css
 new file mode 100644
-index 000000000..0f9c2cf3b
+index 000000000..602004ba2
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-account.css
-@@ -0,0 +1,733 @@
+@@ -0,0 +1,777 @@
 +/* [cx] 账户工作台：完全复用 OpenCode v2 语义 token，不引入品牌外配色。 */
 +@import "@opencode-ai/ui/v2/button-v2.css";
 +@import "@opencode-ai/ui/v2/icon-button-v2.css";
 +@import "@opencode-ai/ui/v2/text-input-v2.css";
 +@import "@opencode-ai/ui/v2/tooltip-v2.css";
 +
-+/* [cx] 账户弹窗使用固定工作台布局：头部与总览保持可见，仅 Keys 列表独立滚动。 */
++/* [cx] 账户弹窗整体自然滚动；Keys 区域不再维护独立滚动层，避免凭据被藏在内部滚动条下。 */
 +[data-slot="dialog-content"].cx-account-dialog {
 +  overflow: hidden;
 +}
@@ -1456,30 +1482,17 @@ index 000000000..0f9c2cf3b
 +  flex: 1;
 +  min-height: 0;
 +  padding: 0 24px 24px;
-+  overflow: hidden;
++  overflow-x: hidden;
++  overflow-y: auto;
 +}
 +
 +.cx-account-body [data-slot="cx-dashboard"] {
 +  display: grid;
-+  height: 100%;
 +  min-width: 0;
-+  min-height: 0;
-+  grid-template-rows: auto auto minmax(0, 1fr);
-+  gap: 16px;
-+}
-+
-+.cx-account-body [data-slot="cx-key-list"] {
-+  scrollbar-color: var(--v2-border-border-base) transparent;
-+  scrollbar-width: thin;
-+}
-+
-+.cx-account-body [data-slot="cx-key-list"]::-webkit-scrollbar {
-+  width: 6px;
-+}
-+
-+.cx-account-body [data-slot="cx-key-list"]::-webkit-scrollbar-thumb {
-+  border-radius: 99px;
-+  background: var(--v2-border-border-base);
++  min-height: 100%;
++  grid-template-rows: auto auto auto;
++  align-content: start;
++  gap: 14px;
 +}
 +
 +.cx-account-body [data-slot="cx-dashboard-head"] {
@@ -1734,10 +1747,9 @@ index 000000000..0f9c2cf3b
 +
 +.cx-account-body [data-slot="cx-key-col"] {
 +  display: flex;
-+  min-height: 0;
++  min-width: 0;
 +  grid-row: 3;
 +  flex-direction: column;
-+  overflow: hidden;
 +  border-radius: 10px;
 +  background: var(--v2-background-bg-layer-01);
 +  box-shadow: inset 0 0 0 0.5px var(--v2-border-border-muted);
@@ -1748,7 +1760,7 @@ index 000000000..0f9c2cf3b
 +  align-items: center;
 +  justify-content: space-between;
 +  gap: 16px;
-+  padding: 16px 20px;
++  padding: 11px 14px;
 +  border-bottom: 0.5px solid var(--v2-border-border-base);
 +}
 +
@@ -1763,7 +1775,7 @@ index 000000000..0f9c2cf3b
 +}
 +
 +.cx-account-body [data-slot="cx-key-col-form"] {
-+  padding: 16px 20px 0;
++  padding: 10px 14px 0;
 +}
 +
 +.cx-account-body [data-slot="cx-key-count"] {
@@ -1781,28 +1793,28 @@ index 000000000..0f9c2cf3b
 +}
 +
 +.cx-account-body [data-slot="cx-key-col-tip"] {
-+  margin-top: 6px;
++  display: inline;
++  margin-left: 10px;
 +  color: var(--v2-text-text-muted);
-+  font-size: 11px;
++  font-size: 10px;
 +}
 +
 +.cx-account-body [data-slot="cx-key-list"] {
 +  display: grid;
-+  min-height: 0;
-+  flex: 1;
-+  grid-auto-rows: max-content;
-+  grid-template-columns: repeat(2, minmax(0, 1fr));
-+  align-content: start;
-+  gap: 12px;
-+  padding: 16px 20px 20px;
-+  overflow-y: auto;
-+  overscroll-behavior: contain;
++  grid-template-columns: minmax(0, 1fr);
++  gap: 6px;
++  padding: 8px 10px 10px;
 +}
 +
++/* 桌面宽度下一行完整呈现一个 Key：身份、指标、额度和操作横向排布。 */
 +.cx-account-body [data-slot="cx-key-card"] {
++  display: grid;
 +  min-width: 0;
-+  padding: 14px 16px;
-+  border-radius: 8px;
++  grid-template-columns: minmax(150px, 1.2fr) minmax(300px, 2fr) minmax(170px, 1.2fr) auto;
++  align-items: center;
++  gap: 14px;
++  padding: 8px 10px;
++  border-radius: 7px;
 +  background: var(--v2-background-bg-layer-02);
 +  box-shadow: inset 0 0 0 0.5px var(--v2-border-border-muted);
 +  outline: none;
@@ -1822,15 +1834,14 @@ index 000000000..0f9c2cf3b
 +}
 +
 +.cx-account-body [data-slot="cx-key-card-head"],
-+.cx-account-body [data-slot="cx-key-user"],
 +.cx-account-body [data-slot="cx-key-actions"] {
 +  display: flex;
++  min-width: 0;
 +  align-items: center;
 +}
 +
 +.cx-account-body [data-slot="cx-key-card-head"] {
-+  gap: 12px;
-+  margin-bottom: 10px;
++  gap: 8px;
 +}
 +
 +.cx-account-body [data-slot="cx-key-card-title"] {
@@ -1882,24 +1893,32 @@ index 000000000..0f9c2cf3b
 +  font-weight: 530;
 +}
 +
-+/* [cx] key 卡片内的 token 级指标（2×2 定义列表，仅 token_* 字段）。 */
++/* [cx] 单行 Key 项内的紧凑指标组。 */
 +.cx-account-body [data-slot="cx-token-stats"] {
 +  display: grid;
-+  grid-template-columns: repeat(2, minmax(0, 1fr));
-+  gap: 10px 12px;
++  min-width: 0;
++  grid-template-columns: repeat(4, minmax(56px, 1fr));
++  gap: 6px;
 +}
 +
 +.cx-account-body [data-slot="cx-token-stat"] {
 +  display: flex;
 +  min-width: 0;
 +  flex-direction: column;
-+  gap: 4px;
++  gap: 2px;
++  padding-left: 8px;
++  border-left: 0.5px solid var(--v2-border-border-base);
++}
++
++.cx-account-body [data-slot="cx-token-stat"]:first-child {
++  padding-left: 0;
++  border-left: 0;
 +}
 +
 +.cx-account-body [data-slot="cx-token-stat"] > span {
 +  overflow: hidden;
 +  color: var(--v2-text-text-muted);
-+  font-size: 11px;
++  font-size: 9px;
 +  text-overflow: ellipsis;
 +  white-space: nowrap;
 +}
@@ -1907,30 +1926,36 @@ index 000000000..0f9c2cf3b
 +.cx-account-body [data-slot="cx-token-stat"] > strong {
 +  overflow: hidden;
 +  color: var(--v2-text-text-base);
-+  font-size: 14px;
++  font-size: 12px;
 +  font-weight: 590;
 +  font-variant-numeric: tabular-nums;
 +  text-overflow: ellipsis;
 +  white-space: nowrap;
 +}
 +
++.cx-account-body [data-slot="cx-key-quota"] {
++  min-width: 0;
++}
++
 +.cx-account-body [data-slot="cx-key-bar-row"] {
 +  display: flex;
-+  align-items: center;
-+  gap: 10px;
-+  margin-top: 12px;
++  min-width: 0;
++  flex-direction: column;
++  gap: 5px;
 +}
 +
 +.cx-account-body [data-slot="cx-key-bar-row"] > span {
-+  flex-shrink: 0;
++  overflow: hidden;
 +  color: var(--v2-text-text-muted);
-+  font-size: 11px;
++  font-size: 10px;
 +  font-variant-numeric: tabular-nums;
++  text-overflow: ellipsis;
++  white-space: nowrap;
 +}
 +
 +.cx-account-body [data-slot="cx-key-bar-track"] {
-+  height: 4px;
-+  flex: 1;
++  width: 100%;
++  height: 3px;
 +  overflow: hidden;
 +  border-radius: 99px;
 +  background: var(--v2-background-bg-layer-04);
@@ -1943,14 +1968,19 @@ index 000000000..0f9c2cf3b
 +}
 +
 +.cx-account-body [data-slot="cx-key-state"] {
++  min-width: 0;
++  grid-column: 2 / 4;
++  overflow: hidden;
 +  color: var(--v2-text-text-faint);
 +  font-size: 11px;
++  text-overflow: ellipsis;
++  white-space: nowrap;
 +}
 +
 +.cx-account-body [data-slot="cx-key-actions"] {
-+  flex-wrap: wrap;
-+  gap: 8px;
-+  margin-top: 14px;
++  justify-content: flex-end;
++  gap: 5px;
++  white-space: nowrap;
 +}
 +
 +.cx-account-body [data-slot="cx-delete-confirm"],
@@ -1960,7 +1990,8 @@ index 000000000..0f9c2cf3b
 +}
 +
 +.cx-account-body [data-slot="cx-unlimited-tag"] {
-+  margin-top: 10px;
++  width: fit-content;
++  margin: 0;
 +}
 +
 +.cx-account-body [data-slot="cx-add-form"] {
@@ -2091,6 +2122,13 @@ index 000000000..0f9c2cf3b
 +  text-align: center;
 +}
 +
++@media (max-width: 900px) {
++  .cx-account-body [data-slot="cx-key-card"] {
++    grid-template-columns: minmax(130px, 1fr) minmax(240px, 1.8fr) minmax(145px, 1fr) auto;
++    gap: 10px;
++  }
++}
++
 +@media (max-width: 720px) {
 +  .cx-account-body {
 +    padding: 0 16px 16px;
@@ -2133,8 +2171,34 @@ index 000000000..0f9c2cf3b
 +    border-left: 0;
 +  }
 +
-+  .cx-account-body [data-slot="cx-key-list"] {
-+    grid-template-columns: 1fr;
++  .cx-account-body [data-slot="cx-key-card"] {
++    grid-template-columns: minmax(0, 1fr) auto;
++    gap: 8px 12px;
++  }
++
++  .cx-account-body [data-slot="cx-key-card-head"] {
++    grid-row: 1;
++    grid-column: 1;
++  }
++
++  .cx-account-body [data-slot="cx-token-stats"] {
++    grid-row: 2;
++    grid-column: 1 / -1;
++  }
++
++  .cx-account-body [data-slot="cx-key-quota"] {
++    grid-row: 3;
++    grid-column: 1 / -1;
++  }
++
++  .cx-account-body [data-slot="cx-key-state"] {
++    grid-row: 2;
++    grid-column: 1 / -1;
++  }
++
++  .cx-account-body [data-slot="cx-key-actions"] {
++    grid-row: 1;
++    grid-column: 2;
 +  }
 +
 +  .cx-account-body [data-slot="cx-add-form"] {
@@ -2158,8 +2222,14 @@ index 000000000..0f9c2cf3b
 +    flex-direction: column;
 +  }
 +
-+  .cx-account-body [data-slot="cx-key-list"] {
-+    max-height: 360px;
++  .cx-account-body [data-slot="cx-token-stats"] {
++    grid-template-columns: repeat(2, minmax(0, 1fr));
++    gap: 8px 0;
++  }
++
++  .cx-account-body [data-slot="cx-token-stat"]:nth-child(3) {
++    padding-left: 0;
++    border-left: 0;
 +  }
 +
 +  .cx-account-body [data-slot="cx-dashboard-head"] {
