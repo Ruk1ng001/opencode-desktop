@@ -55,7 +55,7 @@
 自更新链路（补丁 08 + publish 源 + latest*.yml 合并）代码已就位，全链路程序化预检全绿：
 
 - ✅ 更新源指向本仓库：`brand/electron-builder.brand.ts` 的 `publish` 覆盖上游 `anomalyco/opencode` → `Ruk1ng001/opencode-desktop`（打进产物 `app-update.yml`）；全仓无残留官方更新源引用 → 不弹官方 opencode 更新。
-- ✅ feed 解析：`updater.ts` `allowPrerelease=true` 走 releases.atom 按 `cx` 分量匹配 `-cx.N`；线上 atom feed 实测可解出最新 cx tag，旧→新数值递增可检出。
+- ✅ feed 解析：`updater.ts` `allowPrerelease=true` 走 releases.atom 按 `dokng` 分量匹配 `-dokng.N`；线上 atom feed 实测可解出最新 dokng tag，旧→新数值递增可检出。
 - ✅ 自更新载体：完整三平台 release 的 mac=zip / win=exe / linux=AppImage 全部可达，`latest*.yml`（sha512/size）完整。
 - ⚠️ **发布态注意**：早期 cx.8/cx.9 是「临时只打 Windows+mac-x64」时期产物，缺 linux / mac-arm64。实机验证必须用恢复四平台矩阵后**连发的两个完整三平台版本**。
 

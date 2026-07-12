@@ -28,12 +28,12 @@
 
 ## 1. 品牌名 / productName
 
-产品显示名当前为占位短名 `cx`（上游为 `OpenCode`）。
+产品显示名当前为 `Dokng`（上游为 `OpenCode`）。
 
 **改动点：`brand/brand.json` 的 `productName` 字段。**
 
 ```json
-{ "productName": "cx" }
+{ "productName": "Dokng" }
 ```
 
 `brand/electron-builder.brand.ts` import 上游已解析的 `electron-builder.config.ts` 后，
@@ -227,7 +227,7 @@ OPENCODE_CHANNEL=prod bun run electron-builder \
 ### 自更新原理
 
 `electron-updater` generic provider 从固定 URL（`updateBaseUrl`）读 `latest*.yml`，按
-`version` 字段比对——不经过 GitHub 的 Latest/prerelease 判定，所以 `-cx.N` 版本能被正常
+`version` 字段比对——不经过 GitHub 的 Latest/prerelease 判定，所以 `-dokng.N` 版本能被正常
 选中（补丁 `08` 的 prerelease hack 对 generic 是冗余但无害，保留以便回退纯 github 源时仍有效）。
 `latest*.yml` 里的 `url` 是相对文件名，客户端用「`updateBaseUrl` + 文件名」拼下载地址，故
 安装包与 yml 必须放 R2 同一 `latest/` 目录。

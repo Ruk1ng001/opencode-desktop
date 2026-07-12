@@ -3,7 +3,7 @@ name: release
 # US-009 —— CI：检测 / 构建 / 打包 / 发布
 #
 # 流程（四段 job，依赖串联）：
-#   detect  —— 计算下一个 cx 发布版本号 <opencode版本>-cx.N（读 brand/BASE_TAG +
+#   detect  —— 计算下一个 dokng 发布版本号 <opencode版本>-dokng.N（读 brand/BASE_TAG +
 #              已有 GitHub Release），判断是否需要发布；渠道 Secret 经 ::add-mask:: 屏蔽。
 #   build   —— 在各平台 runner 上 checkout（含 submodule）→ 重放 brand/patches →
 #              bun install → bun run build（electron-vite 构建 renderer/main）。
@@ -21,8 +21,8 @@ name: release
 #
 # 触发：
 #   - 手动 workflow_dispatch（可强制指定版本 / 强制发布）；
-#   - push 到 main（推代码即自动打包发布，版本号 detect 段按已有 release 自增 -cx.N）；
-#   - push tag v*-cx.*（维护者打 tag 即触发发布）。
+#   - push 到 main（推代码即自动打包发布，版本号 detect 段按已有 release 自增 -dokng.N）；
+#   - push tag v*-dokng.*（维护者打 tag 即触发发布）。
 #
 # 平台矩阵严格对齐验收标准 #4：
 #   .dmg=macOS runner，.exe=windows runner，.AppImage=linux runner。
@@ -31,7 +31,7 @@ on:
   workflow_dispatch:
     inputs:
       force_version:
-        description: "强制指定发布版本号（如 v1.17.15-cx.3）；留空则自动计算"
+        description: "强制指定发布版本号（如 v1.17.15-dokng.3）；留空则自动计算"
         required: false
         type: string
       force_release:
@@ -43,7 +43,7 @@ on:
     branches:
       - main
     tags:
-      - "v*-cx.*"
+      - "v*-dokng.*"
 
 # 同一 ref 只跑一个发布流水线，新推送取消旧的。
 concurrency:
@@ -84,7 +84,7 @@ jobs:
           mask "$NEWAPI_TOPUP_URL"
           echo "已登记渠道敏感值日志掩码（值不回显）。"
 
-      - name: 计算下一个 cx 发布版本号
+      - name: 计算下一个 dokng 发布版本号
         id: calc
         env:
           # 覆盖版本（workflow_dispatch 手填）优先；否则脚本按 BASE_TAG + 已有 release 计算。
@@ -109,10 +109,10 @@ jobs:
             exit 0
           fi
 
-          # 查已有 cx release，交给脚本算 N+1。gh 不可用时降级为空（脚本从 cx.1 起）。
+          # 查已有 dokng release，交给脚本算 N+1。gh 不可用时降级为空（脚本从 dokng.1 起）。
           EXISTING="$(gh release list --limit 200 --json tagName --jq '.[].tagName' 2>/dev/null || true)"
           export EXISTING_TAGS="$EXISTING"
-          bash scripts/next-cx-version.sh --base "$BASE_TAG"
+          bash scripts/next-dokng-version.sh --base "$BASE_TAG"
 
       - name: 判断是否需要发布
         id: decide
@@ -154,7 +154,7 @@ jobs:
             artifact_glob: |
               opencode/packages/desktop/dist/*.dmg
               opencode/packages/desktop/dist/*.zip
-            artifact_name: cx-dmg-arm64
+            artifact_name: dokng-dmg-arm64
             meta_subdir: latest-yml-aarch64-apple-darwin
           # .dmg + .zip（Intel）：x64 runner 原生编译，装 x64 的 node-pty。
           # 关键：node-pty 是按平台拆分的独立子包（@lydell/node-pty-darwin-<arch>），
@@ -167,21 +167,21 @@ jobs:
             artifact_glob: |
               opencode/packages/desktop/dist/*.dmg
               opencode/packages/desktop/dist/*.zip
-            artifact_name: cx-dmg-x64
+            artifact_name: dokng-dmg-x64
             meta_subdir: latest-yml-x86_64-apple-darwin
           # .exe 用 windows runner
           - os: windows-latest
             platform_flag: "--win"
             arch_flag: ""
             artifact_glob: "opencode/packages/desktop/dist/*.exe"
-            artifact_name: cx-exe
+            artifact_name: dokng-exe
             meta_subdir: latest-yml-x86_64-pc-windows-msvc
           # .AppImage 用 linux runner
           - os: ubuntu-latest
             platform_flag: "--linux"
             arch_flag: ""
             artifact_glob: "opencode/packages/desktop/dist/*.AppImage"
-            artifact_name: cx-appimage
+            artifact_name: dokng-appimage
             meta_subdir: latest-yml-x86_64-unknown-linux-gnu
     runs-on: ${{ matrix.os }}
     env:
@@ -241,13 +241,13 @@ jobs:
             bun install
           fi
 
-      - name: 注入 cx 版本号到 package.json
+      - name: 注入 dokng 版本号到 package.json
         working-directory: opencode/packages/desktop
         shell: bash
         run: |
           # electron-builder 用 package.json 的 version 作为产物版本，并写进 latest*.yml。
           # 硬编码的 1.17.15 会让所有产物版本一致、自更新永远「已是最新」。故用 detect 算出的
-          # cx 版本号覆盖（剥掉前导 v，semver version 不能带 v）。npm 随 npx 可用。
+          # dokng 版本号覆盖（剥掉前导 v，semver version 不能带 v）。npm 随 npx 可用。
           VER="${{ needs.detect.outputs.version }}"
           npm pkg set version="${VER#v}"
           echo "package.json version = $(npm pkg get version)"
@@ -310,7 +310,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: /tmp/artifacts
-          pattern: cx-*
+          pattern: dokng-*
           merge-multiple: true
 
       - name: 下载更新元数据（latest*.yml，各架构分子目录、不合并）
@@ -330,10 +330,10 @@ jobs:
           TAG: ${{ needs.detect.outputs.tag }}
         run: |
           BASE_TAG="$(tr -d '[:space:]' < brand/BASE_TAG)"
-          NOTES="基于 opencode $BASE_TAG 的 cx 定制发布（$TAG）。三平台安装包：.dmg / .exe / .AppImage。"
+          NOTES="基于 opencode $BASE_TAG 的 dokng 定制发布（$TAG）。三平台安装包：.dmg / .exe / .AppImage。"
           # blockmap 供 electron-updater 差量更新；一并上传（缺失则全量下载，非阻断）。
           find /tmp/latest-yml -name '*.blockmap' -exec cp {} /tmp/artifacts/ \; 2>/dev/null || true
-          # --latest：始终标记为最新（tag 带 -cx.N 会被 GitHub 判为 prerelease、默认不标 Latest；
+          # --latest：始终标记为最新（tag 带 -dokng.N 会被 GitHub 判为 prerelease、默认不标 Latest；
           # 显式 --latest 让 release 页面正常显示，无需手动点）。
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "release $TAG 已存在，覆盖上传产物。"
@@ -405,3 +405,36 @@ jobs:
             --endpoint-url "$endpoint" \
             --checksum-algorithm CRC32
           echo "R2 双写完成：s3://${R2_BUCKET}/latest/"
+
+          # [cx] 保留最近 3 个版本：安装包文件名都含版本 token（1.17.15-dokng.N，
+          # 由 electron-builder artifactName 的 ${version} 注入），latest*.yml 无版本号。
+          # 做法：列出 latest/ 全部对象 → 抽版本 token → sort -V 取最新 3 个为保留集 →
+          # 逐 key 精确比对（grep -qxF 整行匹配，避免 dokng.2 误伤 dokng.20），版本不在
+          # 保留集的安装包 / blockmap 删除；无版本 token 的对象（latest*.yml）永远保留。
+          KEEP_VERSIONS=3
+          mapfile -t all_keys < <(
+            aws s3 ls "s3://${R2_BUCKET}/latest/" --endpoint-url "$endpoint" \
+              | awk '{print $4}' | grep -v '^$' || true
+          )
+          if [ "${#all_keys[@]}" -gt 0 ]; then
+            versions="$(printf '%s\n' "${all_keys[@]}" \
+              | grep -oE '[0-9]+\.[0-9]+\.[0-9]+-dokng\.[0-9]+' | sort -V -u || true)"
+            total="$(printf '%s\n' "$versions" | grep -c . || true)"
+            keep="$(printf '%s\n' "$versions" | tail -n "$KEEP_VERSIONS")"
+            echo "R2 现有版本共 ${total} 个，保留最新 ${KEEP_VERSIONS} 个："
+            printf '  keep: %s\n' $keep
+            if [ "${total:-0}" -gt "$KEEP_VERSIONS" ]; then
+              for key in "${all_keys[@]}"; do
+                v="$(printf '%s' "$key" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+-dokng\.[0-9]+' | head -1 || true)"
+                # 无版本 token（latest*.yml 等）→ 永远保留。
+                [ -n "$v" ] || continue
+                if ! printf '%s\n' "$keep" | grep -qxF "$v"; then
+                  echo "  清理旧版本对象：$key"
+                  aws s3 rm "s3://${R2_BUCKET}/latest/${key}" --endpoint-url "$endpoint" || true
+                fi
+              done
+            else
+              echo "版本数未超过保留上限，无需清理。"
+            fi
+          fi
+          echo "R2 版本清理完成。"
