@@ -182,3 +182,22 @@ packages/app/src/components/cx-account/cx-account-import.tsx
 #   - 独立于其余补丁的文件（仅改 renderer/index.tsx，与 01/02-08 均不共享此改动点），按 NN 序最后应用。
 [10-default-locale-zh]
 packages/desktop/src/renderer/index.tsx
+
+# 品牌名可配置替换（用户可见文案去 OpenCode 化）：
+#   - 单一数据源 brand/brand.json 的 productName，经 electron.vite 在构建期注入
+#     import.meta.env.PRODUCT_NAME（renderer + main 两处 define）；缺省回退 "OpenCode"。
+#   - context/language.tsx：在唯一翻译出口 i18n.translator 处包一层 rebrand()，运行时把文案里的
+#     "OpenCode" 统一替换为 PRODUCT_NAME，一处覆盖全部 18 个语言字典、不改任何字典文件、跟随上游升级
+#     零冲突。保护词（OpenCode Zen / OpenCode Go / opencode.ai / opencode.json）用哨兵占位法保留原样，
+#     避免误改真实第三方服务名 / 文件名 / 技术标识符。app.name.desktop 的 "OpenCode Desktop" 随之变成
+#     "<productName> Desktop"。
+#   - desktop-menu.ts：macOS 应用菜单首项 label 由硬编码 "OpenCode" 改读 PRODUCT_NAME（菜单不走
+#     i18n）；文档 / discord / github 链接保持不动。
+#   - env.d.ts：补 PRODUCT_NAME 的 ImportMetaEnv 类型声明。
+#   - 依赖 02 补丁扩展的 electron.vite.config.ts（新增 PRODUCT_NAME 注入）；仅改 app 包既有文件 +
+#     desktop 配置，按 NN 序最后应用。
+[11-rebrand]
+packages/desktop/electron.vite.config.ts
+packages/app/src/context/language.tsx
+packages/app/src/desktop-menu.ts
+packages/app/src/env.d.ts
