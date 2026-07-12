@@ -207,3 +207,43 @@ OPENCODE_CHANNEL=prod bun run electron-builder \
 
 无签名凭据时设 `CX_UNSIGNED=1` 出未签名包（关公证 / 移除签名回调）。真实签名待有
 证书时去掉该 env 即可。CI 已把这些编排在 `.github/workflows/release.yml` 里。
+
+---
+
+## 发布托管（Cloudflare R2）
+
+默认产物只发 GitHub Release。可额外把产物 + 自更新元数据双写到 Cloudflare R2（出站免费
++ CDN，国内下载快），作主分发源；GitHub Release 保留作存档。
+
+### 涉及的改动点（都已就位）
+
+| 位置 | 作用 |
+|------|------|
+| `brand/brand.json` 的 `updateBaseUrl` | R2 自定义域 + `/latest` 路径。当前是占位 `https://dl.example.com/latest`，改成真实域即启用 |
+| `brand/electron-builder.brand.ts` | `publish` 为 `[generic, github]` 双源数组：`updateBaseUrl` 是有效真实域（非空、非 `example.com`）时把 generic 作主源写进 `app-update.yml`，否则回退纯 github |
+| `.github/workflows/release.yml` 的 release job | finalize `latest*.yml` 后新增 R2 上传步：把安装包 + 合并后的 yml 推到 R2 `latest/`。以 `if: env.R2_ACCESS_KEY_ID != ''` 守卫，未配 Secret 时跳过 |
+| `brand/download-page/` | Cloudflare Pages 下载落地页（静态，读 R2 的 yml 渲染各平台最新版下载按钮），见其 README |
+
+### 自更新原理
+
+`electron-updater` generic provider 从固定 URL（`updateBaseUrl`）读 `latest*.yml`，按
+`version` 字段比对——不经过 GitHub 的 Latest/prerelease 判定，所以 `-cx.N` 版本能被正常
+选中（补丁 `08` 的 prerelease hack 对 generic 是冗余但无害，保留以便回退纯 github 源时仍有效）。
+`latest*.yml` 里的 `url` 是相对文件名，客户端用「`updateBaseUrl` + 文件名」拼下载地址，故
+安装包与 yml 必须放 R2 同一 `latest/` 目录。
+
+### 启用步骤（Cloudflare 侧手动，本仓库无法代做）
+
+1. **建 R2 桶**（如 `dokng-releases`），在桶设置里开启自定义域，绑 `dl.你的域名`。
+2. **建 R2 API Token**（Object Read & Write 权限），记下 Account ID / Access Key ID /
+   Secret Access Key。
+3. **配 GitHub Secret**（仓库 Settings → Secrets and variables → Actions）：
+   - `R2_ACCOUNT_ID`：R2 的 account id
+   - `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY`：上一步的 token 凭据
+   - `R2_BUCKET`：桶名（如 `dokng-releases`）
+4. **改 `brand/brand.json`** 的 `updateBaseUrl` 为 `https://dl.你的域名/latest`，提交。
+5. **（下载页）** 建 Cloudflare Pages 项目连本仓库、构建目录设 `brand/download-page/`，
+   绑下载页子域；若下载页与 `dl` 不同域，按 `brand/download-page/README.md` 给 R2 桶加
+   CORS 规则允许下载页域 `GET`。
+
+配好后 push 触发一次 release，即可在 R2 桶看到 `latest/` 下的产物，下载页能解析出最新版。

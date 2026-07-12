@@ -37,15 +37,31 @@ const brandedProductName = (base.productName ?? UPSTREAM_PRODUCT_NAME).replace(U
 // 默认（未设该 env）行为与上游一致：走完整签名 / 公证链路（需相应凭据）。
 const unsigned = process.env.CX_UNSIGNED === "1"
 
+// [cx] 自更新源：优先 Cloudflare R2（generic，出站免费 + 全球 CDN），GitHub 作回退。
+// electron-updater 支持 publish 数组多源：数组首项写进产物 app-update.yml 的主源，
+// 客户端自更新先查 R2 的 latest*.yml；R2 不可达时回退 GitHub Release。
+//   - generic url 来自 brand.json 的 updateBaseUrl（如 https://dl.<域名>/latest），
+//     与从 brand.json 读 appId/productName 的模式一致，域名不散落硬编码。
+//   - 占位域名（含 example.com）或缺省时回退为纯 GitHub publish：本地构建 / 未绑 R2
+//     的环境不受影响，app-update.yml 仍带 GitHub 源可正常自更新。
+//   - generic provider 直接读固定 URL 的 latest*.yml、按 version 比对，不经 GitHub 的
+//     prerelease 判定；补丁 08（allowPrerelease=true）对 generic 无害冗余、保留作回退。
+// channel:"latest" 与 updater.ts 的 autoUpdater.channel="latest" 对齐（生成/查找 latest*.yml）。
+// CI 打包 --publish never（只出产物 + dist 里的 latest*.yml），发布仍由 release job 手动
+// gh release + R2 双写完成。
+const githubPublish = { provider: "github", owner: "Ruk1ng001", repo: "opencode-desktop", channel: "latest" } as const
+const updateBaseUrl = (brand as { updateBaseUrl?: string }).updateBaseUrl?.trim() ?? ""
+// 占位（example.com）或空 → 纯 GitHub；已填真实 R2 域名 → R2 优先 + GitHub 回退。
+const useR2 = updateBaseUrl.length > 0 && !updateBaseUrl.includes("example.com")
+const brandedPublish = useR2
+  ? [{ provider: "generic", url: updateBaseUrl, channel: "latest" } as const, githubPublish]
+  : githubPublish
+
 const config: Configuration = {
   ...base,
   appId: brandedAppId,
   productName: brandedProductName,
-  // [cx] 自动更新源指向本仓库（覆盖 base 的官方 anomalyco/opencode）。这份 publish 会打进产物的
-  // app-update.yml，决定 electron-updater 去哪查更新；channel:"latest" 与 updater.ts 的
-  // autoUpdater.channel="latest" 对齐（生成/查找 latest*.yml）。CI 打包 --publish never（只出产物 +
-  // dist 里的 latest*.yml），发布仍由 release job 手动 gh release + 合并上传 yml 完成。
-  publish: { provider: "github", owner: "Ruk1ng001", repo: "opencode-desktop", channel: "latest" },
+  publish: brandedPublish,
   // 由 appId 派生的 Linux 桌面身份需同步覆盖，否则窗口类 / 启动器与新 appId 不一致。
   extraMetadata: {
     ...base.extraMetadata,

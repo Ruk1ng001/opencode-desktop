@@ -358,6 +358,50 @@ jobs:
         run: |
           # finalize-latest-yml.ts：把 mac 双架构 latest-mac.yml 合并成单个（含两架构 files），
           # win/linux 透传，再 gh release upload 到当前 tag（脚本内用 v${OPENCODE_VERSION} 拼 tag）。
+          # 脚本把合并后的 yml 写到 $RUNNER_TEMP（供下一步 R2 双写取用），同时上传到 GitHub Release。
           # OPENCODE_VERSION 需不带 v；detect 输出带 v，这里剥掉。
           export OPENCODE_VERSION="${OPENCODE_VERSION#v}"
           bun opencode/packages/desktop/scripts/finalize-latest-yml.ts
+
+      # [cx] R2 双写：把安装包 + 合并后的 latest*.yml 推到 Cloudflare R2 的 latest/ 目录，
+      # 作为 electron-updater 的主更新源（GitHub Release 保留为存档 / 回退源）。
+      # 守卫：未配置 R2 Secret 时整步跳过，不阻断 GitHub 发布（渐进启用）。
+      # 用 aws s3 CLI（ubuntu runner 自带，R2 兼容 S3 API），endpoint 指向 R2。
+      - name: 双写产物到 Cloudflare R2（latest/ 目录）
+        if: env.R2_ACCESS_KEY_ID != ''
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          # aws CLI 走 R2 的 S3 兼容凭据（与 R2_* 同源，避免污染其他步骤的 AWS 环境）。
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          RUNNER_TEMP: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          # 敏感值登记日志掩码，防误打印。
+          for v in "$R2_ACCOUNT_ID" "$R2_ACCESS_KEY_ID" "$R2_SECRET_ACCESS_KEY" "$R2_BUCKET"; do
+            [ -n "$v" ] && echo "::add-mask::$v" || true
+          done
+
+          endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+
+          # staging：安装包 + blockmap（release 步骤已 cp 到 /tmp/artifacts）+ 合并后的
+          # latest*.yml（finalize 步骤写到 $RUNNER_TEMP）。合并 yml 覆盖 staging 里的同名文件，
+          # 确保 R2 上是合并后的单文件（含双架构 files），而非各架构分片。
+          mkdir -p /tmp/r2
+          cp -f /tmp/artifacts/* /tmp/r2/ 2>/dev/null || true
+          for y in latest.yml latest-mac.yml latest-linux.yml latest-linux-arm64.yml; do
+            [ -f "$RUNNER_TEMP/$y" ] && cp -f "$RUNNER_TEMP/$y" /tmp/r2/ || true
+          done
+
+          echo "待上传到 R2 latest/ 的文件："; ls -la /tmp/r2
+
+          # --checksum-algorithm CRC32：规避 R2 对 S3 默认分块校验（CRC64NVME）的兼容问题。
+          aws s3 cp /tmp/r2/ "s3://${R2_BUCKET}/latest/" \
+            --recursive \
+            --endpoint-url "$endpoint" \
+            --checksum-algorithm CRC32
+          echo "R2 双写完成：s3://${R2_BUCKET}/latest/"
