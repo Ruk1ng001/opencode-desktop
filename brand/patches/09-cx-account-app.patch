@@ -499,10 +499,10 @@ index 000000000..e93c09034
 +}
 diff --git a/packages/app/src/components/cx-account/cx-account-dialog.tsx b/packages/app/src/components/cx-account/cx-account-dialog.tsx
 new file mode 100644
-index 000000000..b69358f7c
+index 000000000..5a6d50479
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-account-dialog.tsx
-@@ -0,0 +1,779 @@
+@@ -0,0 +1,783 @@
 +// [cx] 账户面板（迁自 desktop 包 renderer/balance/balance-panel.tsx，US-005 → US-013）。
 +//
 +// 本文件是账户面板从 desktop 包迁入 @opencode-ai/app 包的落地：改用原生 v2 组件
@@ -545,8 +545,8 @@ index 000000000..b69358f7c
 +  type ResolvedKey,
 +} from "./cx-account-api"
 +
-+// [cx] US-008/US-009: 单张 key 卡片。按各自 key 独立展示 profile（loading/error/ready），并提供
-+// 切换激活 / 编辑 label / 删除操作（builtin 内置渠道条目不可管理）。
++// [cx] US-008/US-009: 单条 key 列表项。按各自 key 独立展示 profile（loading/error/ready）；点击整行
++// 切换激活，选中态由背景与强调边框表达，操作区只保留编辑 label / 删除（builtin 条目不可管理）。
 +function KeyCard(props: {
 +  entry: ResolvedKey
 +  state: KeyProfileState | undefined
@@ -583,9 +583,18 @@ index 000000000..b69358f7c
 +      data-slot="cx-key-card"
 +      data-active={props.entry.isActive ? "" : undefined}
 +      data-clickable={clickable() ? "" : undefined}
++      aria-current={props.entry.isActive ? "true" : undefined}
++      aria-label={clickable() ? `切换到 ${displayLabel()}` : undefined}
++      role={clickable() ? "button" : undefined}
++      tabIndex={clickable() ? 0 : undefined}
 +      onClick={() => {
 +        // 仅在「非激活、可管理、未切换中、未处于内联编辑」时，点击列表项切换激活。
 +        if (clickable() && !editing()) props.onActivate(props.entry)
++      }}
++      onKeyDown={(event) => {
++        if (!clickable() || editing() || (event.key !== "Enter" && event.key !== " ")) return
++        event.preventDefault()
++        props.onActivate(props.entry)
 +      }}
 +    >
 +      <header data-slot="cx-key-card-head">
@@ -610,9 +619,6 @@ index 000000000..b69358f7c
 +            </div>
 +          </Show>
 +        </div>
-+        <Show when={props.entry.isActive}>
-+          <Tag data-slot="cx-active-tag">激活</Tag>
-+        </Show>
 +      </header>
 +
 +      <Switch>
@@ -677,23 +683,13 @@ index 000000000..b69358f7c
 +        </Match>
 +      </Switch>
 +
-+      {/* [cx] US-009: 紧凑操作区——文字仅保留激活，编辑/删除使用带提示的图标按钮。 */}
++      {/* [cx] US-009: 整行负责激活切换；操作区只保留带提示的编辑/删除图标按钮。 */}
 +      <Show when={manageable()}>
 +        <div data-slot="cx-key-actions" onClick={(e) => e.stopPropagation()}>
 +          <Show
 +            when={editing()}
 +            fallback={
 +              <>
-+                <Show when={!props.entry.isActive}>
-+                  <ButtonV2
-+                    variant="contrast"
-+                    size="small"
-+                    disabled={props.switching}
-+                    onClick={() => props.onActivate(props.entry)}
-+                  >
-+                    {props.switching ? "切换中…" : "激活"}
-+                  </ButtonV2>
-+                </Show>
 +                <TooltipV2 value="编辑名称" placement="top">
 +                  <IconButtonV2
 +                    aria-label="编辑名称"
@@ -717,20 +713,28 @@ index 000000000..b69358f7c
 +                    </TooltipV2>
 +                  }
 +                >
-+                  <span data-slot="cx-delete-confirm">确认删除？</span>
-+                  <ButtonV2
-+                    variant="danger"
-+                    size="small"
-+                    onClick={() => {
-+                      setConfirmingDelete(false)
-+                      props.onRemove(props.entry.id)
-+                    }}
-+                  >
-+                    确认
-+                  </ButtonV2>
-+                  <ButtonV2 variant="neutral" size="small" onClick={() => setConfirmingDelete(false)}>
-+                    取消
-+                  </ButtonV2>
++                  <TooltipV2 value="确认删除" placement="top">
++                    <IconButtonV2
++                      data-slot="cx-delete-confirm-button"
++                      aria-label="确认删除"
++                      variant="neutral"
++                      size="small"
++                      onClick={() => {
++                        setConfirmingDelete(false)
++                        props.onRemove(props.entry.id)
++                      }}
++                      icon={<Icon name="check-small" size="small" />}
++                    />
++                  </TooltipV2>
++                  <TooltipV2 value="取消删除" placement="top">
++                    <IconButtonV2
++                      aria-label="取消删除"
++                      variant="neutral"
++                      size="small"
++                      onClick={() => setConfirmingDelete(false)}
++                      icon={<Icon name="close" size="small" />}
++                    />
++                  </TooltipV2>
 +                </Show>
 +              </>
 +            }
@@ -1463,10 +1467,10 @@ index 000000000..2a4abd208
 +export { CxDialogImport }
 diff --git a/packages/app/src/components/cx-account/cx-account.css b/packages/app/src/components/cx-account/cx-account.css
 new file mode 100644
-index 000000000..602004ba2
+index 000000000..6262505b4
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-account.css
-@@ -0,0 +1,777 @@
+@@ -0,0 +1,795 @@
 +/* [cx] 账户工作台：完全复用 OpenCode v2 语义 token，不引入品牌外配色。 */
 +@import "@opencode-ai/ui/v2/button-v2.css";
 +@import "@opencode-ai/ui/v2/icon-button-v2.css";
@@ -1818,7 +1822,9 @@ index 000000000..602004ba2
 +  background: var(--v2-background-bg-layer-02);
 +  box-shadow: inset 0 0 0 0.5px var(--v2-border-border-muted);
 +  outline: none;
-+  transition: background-color 120ms ease;
++  transition:
++    background-color 120ms ease,
++    box-shadow 120ms ease;
 +}
 +
 +.cx-account-body [data-slot="cx-key-card"][data-clickable] {
@@ -1829,8 +1835,16 @@ index 000000000..602004ba2
 +  background: var(--v2-background-bg-layer-03);
 +}
 +
-+.cx-account-body [data-slot="cx-key-card"][data-active] {
++.cx-account-body [data-slot="cx-key-card"][data-clickable]:focus-visible {
 +  box-shadow: inset 0 0 0 1px var(--v2-border-border-focus);
++}
++
++/* 激活态不再依赖按钮或标签：强调背景 + 左侧色条让当前 Key 一眼可辨。 */
++.cx-account-body [data-slot="cx-key-card"][data-active] {
++  background: var(--v2-background-bg-layer-03);
++  box-shadow:
++    inset 3px 0 0 var(--v2-background-bg-accent),
++    inset 0 0 0 0.5px var(--v2-border-border-focus);
 +}
 +
 +.cx-account-body [data-slot="cx-key-card-head"],
@@ -1864,10 +1878,6 @@ index 000000000..602004ba2
 +  color: var(--v2-text-text-faint);
 +  font-family: var(--font-mono, monospace);
 +  font-size: 11px;
-+}
-+
-+.cx-account-body [data-slot="cx-active-tag"] {
-+  flex-shrink: 0;
 +}
 +
 +.cx-account-body [data-slot="cx-mini-avatar"],
@@ -1979,11 +1989,23 @@ index 000000000..602004ba2
 +
 +.cx-account-body [data-slot="cx-key-actions"] {
 +  justify-content: flex-end;
-+  gap: 5px;
++  gap: 4px;
++  opacity: 0.72;
 +  white-space: nowrap;
++  transition: opacity 120ms ease;
 +}
 +
-+.cx-account-body [data-slot="cx-delete-confirm"],
++.cx-account-body [data-slot="cx-key-card"]:hover [data-slot="cx-key-actions"],
++.cx-account-body [data-slot="cx-key-card"]:focus-within [data-slot="cx-key-actions"],
++.cx-account-body [data-slot="cx-key-card"][data-active] [data-slot="cx-key-actions"] {
++  opacity: 1;
++}
++
++.cx-account-body [data-slot="cx-delete-confirm-button"] {
++  background: var(--v2-state-bg-danger);
++  color: var(--v2-state-fg-danger);
++}
++
 +.cx-account-body [data-slot="cx-form-error"] {
 +  color: var(--v2-state-fg-danger);
 +  font-size: 11px;
