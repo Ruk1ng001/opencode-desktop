@@ -1,9 +1,9 @@
 diff --git a/packages/app/src/components/cx-account/cx-account-api.ts b/packages/app/src/components/cx-account/cx-account-api.ts
 new file mode 100644
-index 000000000..7e15bd44a
+index 000000000..e93c09034
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-account-api.ts
-@@ -0,0 +1,431 @@
+@@ -0,0 +1,493 @@
 +// [cx] 账户面板数据层（迁自 desktop 包 renderer/balance/balance-panel.tsx，US-005 → US-013）。
 +//
 +// 纯数据层：零 UI import（不 import solid-js / 上游组件），可离线 typecheck。承载：
@@ -111,6 +111,23 @@ index 000000000..7e15bd44a
 +  return "$" + (quotaUnits / QUOTA_PER_UNIT).toFixed(2)
 +}
 +
++// 模型实际消耗 token 数的人类可读格式。注意：这里的 token 指 prompt_tokens +
++// completion_tokens，不是 new-api 的 API Token / Key 记录。
++export function formatTokenCount(value: number | null): string {
++  if (value === null || !Number.isFinite(value)) return "—"
++  const count = Math.max(0, value)
++  const units = [
++    { value: 1_000_000_000, suffix: "B" },
++    { value: 1_000_000, suffix: "M" },
++    { value: 1_000, suffix: "K" },
++  ]
++  const unit = units.find((item) => count >= item.value)
++  if (!unit) return Math.round(count).toLocaleString("zh-CN")
++  const scaled = count / unit.value
++  const digits = scaled >= 100 ? 0 : scaled >= 10 ? 1 : 2
++  return `${Number(scaled.toFixed(digits))}${unit.suffix}`
++}
++
 +// [cx] US-006: 无头像时的占位首字（取用户名首字符，空则用「?」）。
 +export function avatarInitial(username: string): string {
 +  const trimmed = username.trim()
@@ -153,28 +170,53 @@ index 000000000..7e15bd44a
 +// [cx] US-006: profile 就绪态承载的字段。额度类均为 new-api 原始 quota 整数，换算在渲染层做。
 +type ProfileData = {
 +  username: string
++  displayName: string
 +  avatar: string
-+  quota: number
-+  usedQuota: number
-+  // 账户级今日消耗（可选）。后端未实现该字段时为 null，UI 显示「—」。
-+  usedToday: number | null
-+  tokenRemain: number
-+  tokenUsed: number
-+  tokenUsedToday: number
-+  unlimited: boolean
-+  // [cx] 该 key 在 new-api 侧的 token 名称（token.Name）。新增 key 未填名称时用它作为本地
-+  // label 的一次性来源（后续不再与远端同步）。可能为空串（未命名 token）。
++  // 账户额度来自 user.Quota（剩余）与 user.UsedQuota（累计），不能受当前 Key 是否不限额影响。
++  accountRemainingQuota: number
++  accountUsedQuota: number
++  accountTotalQuota: number
++  accountQuotaUsedToday: number | null
++  // 实际模型 token 数 = logs.prompt_tokens + logs.completion_tokens；与 API Key 记录严格区分。
++  accountTokensUsedToday: number | null
++  accountPromptTokensToday: number | null
++  accountCompletionTokensToday: number | null
++  keyRemainingQuota: number
++  keyUsedQuota: number
++  keyQuotaUsedToday: number | null
++  keyTokensUsedToday: number | null
++  keyPromptTokensToday: number | null
++  keyCompletionTokensToday: number | null
++  keyUnlimitedQuota: boolean
++  requestCountToday: number | null
++  // [cx] 该 key 在 new-api 侧的 token.Name。若本地没填名称，UI 直接用此字段展示，新增时也会回填本地。
 +  tokenName: string
 +}
 +
 +// [cx] US-006: /api/app/profile 响应信封（见 brand/docs/api-app-profile.md 第 3 节）。字段全部
 +// 可选，做防御性解析；契约未强约束 success 信封，故按 HTTP status 分支，data 缺失时把整个 body
 +// 当作扁平 profile 兜底。
-+type ProfileResponse = {
-+  success?: boolean
-+  message?: string
++type ProfilePayload = {
 +  username?: string
++  display_name?: string
 +  avatar?: string
++  account_remaining_quota?: number
++  account_used_quota?: number
++  account_total_quota?: number
++  account_quota_used_today?: number
++  account_tokens_used_today?: number
++  account_prompt_tokens_today?: number
++  account_completion_tokens_today?: number
++  key_name?: string
++  key_remaining_quota?: number
++  key_used_quota?: number
++  key_quota_used_today?: number
++  key_tokens_used_today?: number
++  key_prompt_tokens_today?: number
++  key_completion_tokens_today?: number
++  key_unlimited_quota?: boolean
++  request_count_today?: number
++  // 旧版二开字段兼容：新后端应优先返回上面的 account_* / key_* 明确命名。
 +  quota?: number
 +  used_quota?: number
 +  used_today?: number
@@ -183,18 +225,12 @@ index 000000000..7e15bd44a
 +  token_used?: number
 +  token_used_today?: number
 +  unlimited?: boolean
-+  data?: {
-+    username?: string
-+    avatar?: string
-+    quota?: number
-+    used_quota?: number
-+    used_today?: number
-+    token_name?: string
-+    token_remain?: number
-+    token_used?: number
-+    token_used_today?: number
-+    unlimited?: boolean
-+  }
++}
++
++type ProfileResponse = ProfilePayload & {
++  success?: boolean
++  message?: string
++  data?: ProfilePayload
 +}
 +
 +// [cx] US-008: 单 key 的 profile 拉取结果。无凭据的 key 不会进列表，故只有 loading/error/ready。
@@ -279,7 +315,8 @@ index 000000000..7e15bd44a
 +  if (state.keys.length > 0) {
 +    return state.keys.map((k) => ({
 +      id: k.id,
-+      label: k.label || "未命名 key",
++      // 保留空 label，让 profile 返回的 token.Name 能成为展示名；不要过早固化成占位文案。
++      label: k.label.trim(),
 +      key: k.key,
 +      baseURL: k.baseURL || fallbackBase,
 +      isActive: k.id === state.activeKeyId,
@@ -327,18 +364,43 @@ index 000000000..7e15bd44a
 +      return { status: "error", message: body.message || "接口返回失败" }
 +    }
 +    const p = body.data ?? body
++    const accountUsedQuota = p.account_used_quota ?? p.used_quota ?? 0
++    const accountTotalQuota = p.account_total_quota ?? p.quota ?? 0
++    const accountRemainingQuota = p.account_remaining_quota ?? Math.max(0, accountTotalQuota - accountUsedQuota)
 +    return {
 +      status: "ready",
 +      username: p.username ?? "",
++      displayName: p.display_name ?? "",
 +      avatar: p.avatar ?? "",
-+      quota: p.quota ?? 0,
-+      usedQuota: p.used_quota ?? 0,
-+      usedToday: typeof p.used_today === "number" ? p.used_today : null,
-+      tokenRemain: p.token_remain ?? 0,
-+      tokenUsed: p.token_used ?? 0,
-+      tokenUsedToday: p.token_used_today ?? 0,
-+      unlimited: p.unlimited ?? false,
-+      tokenName: typeof p.token_name === "string" ? p.token_name : "",
++      accountRemainingQuota,
++      accountUsedQuota,
++      accountTotalQuota: accountTotalQuota || accountRemainingQuota + accountUsedQuota,
++      accountQuotaUsedToday:
++        typeof p.account_quota_used_today === "number"
++          ? p.account_quota_used_today
++          : typeof p.used_today === "number"
++            ? p.used_today
++            : null,
++      accountTokensUsedToday: typeof p.account_tokens_used_today === "number" ? p.account_tokens_used_today : null,
++      accountPromptTokensToday:
++        typeof p.account_prompt_tokens_today === "number" ? p.account_prompt_tokens_today : null,
++      accountCompletionTokensToday:
++        typeof p.account_completion_tokens_today === "number" ? p.account_completion_tokens_today : null,
++      keyRemainingQuota: p.key_remaining_quota ?? p.token_remain ?? 0,
++      keyUsedQuota: p.key_used_quota ?? p.token_used ?? 0,
++      keyQuotaUsedToday:
++        typeof p.key_quota_used_today === "number"
++          ? p.key_quota_used_today
++          : typeof p.token_used_today === "number"
++            ? p.token_used_today
++            : null,
++      keyTokensUsedToday: typeof p.key_tokens_used_today === "number" ? p.key_tokens_used_today : null,
++      keyPromptTokensToday: typeof p.key_prompt_tokens_today === "number" ? p.key_prompt_tokens_today : null,
++      keyCompletionTokensToday:
++        typeof p.key_completion_tokens_today === "number" ? p.key_completion_tokens_today : null,
++      keyUnlimitedQuota: p.key_unlimited_quota ?? p.unlimited ?? false,
++      requestCountToday: typeof p.request_count_today === "number" ? p.request_count_today : null,
++      tokenName: typeof p.key_name === "string" ? p.key_name : typeof p.token_name === "string" ? p.token_name : "",
 +    }
 +  } catch (error) {
 +    return {
@@ -437,10 +499,10 @@ index 000000000..7e15bd44a
 +}
 diff --git a/packages/app/src/components/cx-account/cx-account-dialog.tsx b/packages/app/src/components/cx-account/cx-account-dialog.tsx
 new file mode 100644
-index 000000000..acd4c6b08
+index 000000000..18b80b4e9
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-account-dialog.tsx
-@@ -0,0 +1,741 @@
+@@ -0,0 +1,753 @@
 +// [cx] 账户面板（迁自 desktop 包 renderer/balance/balance-panel.tsx，US-005 → US-013）。
 +//
 +// 本文件是账户面板从 desktop 包迁入 @opencode-ai/app 包的落地：改用原生 v2 组件
@@ -469,6 +531,7 @@ index 000000000..acd4c6b08
 +  fetchProfileWith,
 +  fetchTokenName,
 +  formatCurrency,
++  formatTokenCount,
 +  keyUsedPercent,
 +  loadChannelState,
 +  maskKey,
@@ -497,8 +560,14 @@ index 000000000..acd4c6b08
 +  const [labelDraft, setLabelDraft] = createSignal("")
 +  const [confirmingDelete, setConfirmingDelete] = createSignal(false)
 +
++  const readyProfile = () => {
++    const current = state()
++    return current.status === "ready" ? current : undefined
++  }
++  const displayLabel = () => props.entry.label.trim() || readyProfile()?.tokenName.trim() || "未命名 key"
++
 +  function startEdit() {
-+    setLabelDraft(props.entry.label)
++    setLabelDraft(displayLabel() === "未命名 key" ? "" : displayLabel())
 +    setEditing(true)
 +  }
 +  function saveEdit() {
@@ -525,7 +594,7 @@ index 000000000..acd4c6b08
 +            when={editing()}
 +            fallback={
 +              <>
-+                <div data-slot="cx-key-label">{props.entry.label}</div>
++                <div data-slot="cx-key-label">{displayLabel()}</div>
 +                <div data-slot="cx-key-masked">{maskKey(props.entry.key)}</div>
 +              </>
 +            }
@@ -570,16 +639,16 @@ index 000000000..acd4c6b08
 +            <>
 +              <div data-slot="cx-token-stats">
 +                <div data-slot="cx-token-stat">
-+                  <span>剩余额度</span>
-+                  <strong>{ready.unlimited ? "不限额" : formatCurrency(ready.tokenRemain)}</strong>
++                  <span>今日 Tokens</span>
++                  <strong>{formatTokenCount(ready.keyTokensUsedToday)}</strong>
 +                </div>
 +                <div data-slot="cx-token-stat">
-+                  <span>今日消耗</span>
-+                  <strong>{formatCurrency(ready.tokenUsedToday)}</strong>
++                  <span>今日费用</span>
++                  <strong>{ready.keyQuotaUsedToday === null ? "—" : formatCurrency(ready.keyQuotaUsedToday)}</strong>
 +                </div>
 +                <div data-slot="cx-token-stat">
-+                  <span>累计消耗</span>
-+                  <strong>{formatCurrency(ready.tokenUsed)}</strong>
++                  <span>累计费用</span>
++                  <strong>{formatCurrency(ready.keyUsedQuota)}</strong>
 +                </div>
 +                <div data-slot="cx-token-stat">
 +                  <span>可用模型</span>
@@ -587,15 +656,18 @@ index 000000000..acd4c6b08
 +                </div>
 +              </div>
 +
-+              <Show when={!ready.unlimited} fallback={<Tag data-slot="cx-unlimited-tag">不限额 token</Tag>}>
++              <Show when={!ready.keyUnlimitedQuota} fallback={<Tag data-slot="cx-unlimited-tag">额度不限</Tag>}>
 +                <div data-slot="cx-key-bar-row">
 +                  <div data-slot="cx-key-bar-track">
 +                    <div
 +                      data-slot="cx-key-bar-fill"
-+                      style={{ width: `${keyUsedPercent(ready.tokenUsed, ready.tokenRemain)}%` }}
++                      style={{ width: `${keyUsedPercent(ready.keyUsedQuota, ready.keyRemainingQuota)}%` }}
 +                    />
 +                  </div>
-+                  <span>{keyUsedPercent(ready.tokenUsed, ready.tokenRemain)}%</span>
++                  <span>
++                    额度 {keyUsedPercent(ready.keyUsedQuota, ready.keyRemainingQuota)}% · 剩余{" "}
++                    {formatCurrency(ready.keyRemainingQuota)}
++                  </span>
 +                </div>
 +              </Show>
 +            </>
@@ -792,10 +864,7 @@ index 000000000..acd4c6b08
 +    )
 +    return {
 +      loaded: ready.length,
-+      remaining: ready.filter((profile) => !profile.unlimited).reduce((sum, profile) => sum + profile.tokenRemain, 0),
-+      usedToday: ready.reduce((sum, profile) => sum + profile.tokenUsedToday, 0),
-+      used: ready.reduce((sum, profile) => sum + profile.tokenUsed, 0),
-+      unlimited: ready.filter((profile) => profile.unlimited).length,
++      unlimited: ready.filter((profile) => profile.keyUnlimitedQuota).length,
 +    }
 +  }
 +
@@ -1030,13 +1099,20 @@ index 000000000..acd4c6b08
 +                      <div data-slot="cx-account-head">
 +                        <Show
 +                          when={ready.avatar}
-+                          fallback={<div data-slot="cx-account-avatar-fallback">{avatarInitial(ready.username)}</div>}
++                          fallback={
++                            <div data-slot="cx-account-avatar-fallback">
++                              {avatarInitial(ready.displayName || ready.username)}
++                            </div>
++                          }
 +                        >
 +                          <img src={ready.avatar} alt="头像" data-slot="cx-account-avatar" />
 +                        </Show>
 +                        <div data-slot="cx-account-copy">
-+                          <div data-slot="cx-account-name">{ready.username || "未命名用户"}</div>
-+                          <div data-slot="cx-account-subtitle">当前使用 {activeEntry()?.label}</div>
++                          <div data-slot="cx-account-name">{ready.displayName || ready.username || "未命名用户"}</div>
++                          <div data-slot="cx-account-subtitle">
++                            {ready.displayName && ready.username ? `@${ready.username} · ` : ""}当前使用{" "}
++                            {activeEntry()?.label || ready.tokenName || "未命名 key"}
++                          </div>
 +                        </div>
 +                        <Tag data-slot="cx-connection-tag">已连接</Tag>
 +                      </div>
@@ -1071,8 +1147,7 @@ index 000000000..acd4c6b08
 +                </div>
 +              </div>
 +
-+              {/* [cx] 余额与 Token 指标合并为一张数据总览：环形图负责表达账户额度使用率，右侧指标把
-+                  账户级与全部 Token 快照放在同一视觉层级，避免两套统计上下重复。 */}
++              {/* [cx] 账户余额与真实模型 Token 用量总览。API Key 数量只作为同步状态，绝不当作 token 消耗。 */}
 +              <Show
 +                when={
 +                  accountProfile()?.status === "ready"
@@ -1086,25 +1161,19 @@ index 000000000..acd4c6b08
 +                    <div data-slot="cx-usage-visual">
 +                      <div
 +                        data-slot="cx-usage-ring"
-+                        style={`--cx-used: ${ready.unlimited ? 0 : usedPercent(ready.usedQuota, ready.quota)}`}
++                        style={`--cx-used: ${usedPercent(ready.accountUsedQuota, ready.accountTotalQuota)}`}
 +                        role="img"
-+                        aria-label={
-+                          ready.unlimited
-+                            ? "账户不限额"
-+                            : `账户额度已使用 ${usedPercent(ready.usedQuota, ready.quota)}%`
-+                        }
++                        aria-label={`账户额度已使用 ${usedPercent(ready.accountUsedQuota, ready.accountTotalQuota)}%`}
 +                      >
 +                        <div data-slot="cx-usage-ring-inner">
-+                          <strong>{ready.unlimited ? "∞" : `${usedPercent(ready.usedQuota, ready.quota)}%`}</strong>
-+                          <span>额度已用</span>
++                          <strong>{`${usedPercent(ready.accountUsedQuota, ready.accountTotalQuota)}%`}</strong>
++                          <span>账户额度已用</span>
 +                        </div>
 +                      </div>
 +                      <div data-slot="cx-usage-copy">
 +                        <span>可用余额</span>
-+                        <strong>
-+                          {ready.unlimited ? "不限额" : formatCurrency(Math.max(0, ready.quota - ready.usedQuota))}
-+                        </strong>
-+                        <small>{ready.unlimited ? "无额度限制" : `账户总额 ${formatCurrency(ready.quota)}`}</small>
++                        <strong>{formatCurrency(ready.accountRemainingQuota)}</strong>
++                        <small>账户总额 {formatCurrency(ready.accountTotalQuota)}</small>
 +                      </div>
 +                    </div>
 +
@@ -1112,26 +1181,31 @@ index 000000000..acd4c6b08
 +                      <div data-slot="cx-overview-head">
 +                        <span>用量概览</span>
 +                        <small>
-+                          已同步 {tokenSummary().loaded} / {keys().length} 个 Token
-+                          <Show when={tokenSummary().unlimited > 0}> · {tokenSummary().unlimited} 个不限额</Show>
++                          已同步 {tokenSummary().loaded} / {keys().length} 个 Key
++                          <Show when={tokenSummary().unlimited > 0}> · {tokenSummary().unlimited} 个额度不限</Show>
 +                        </small>
 +                      </div>
 +                      <div data-slot="cx-overview-grid">
 +                        <div data-slot="cx-overview-item">
-+                          <span>账户今日消耗</span>
-+                          <strong>{ready.usedToday === null ? "—" : formatCurrency(ready.usedToday)}</strong>
++                          <span>今日 Tokens</span>
++                          <strong>{formatTokenCount(ready.accountTokensUsedToday)}</strong>
 +                        </div>
 +                        <div data-slot="cx-overview-item">
-+                          <span>账户累计消耗</span>
-+                          <strong>{formatCurrency(ready.usedQuota)}</strong>
++                          <span>输入 / 输出</span>
++                          <strong>
++                            {formatTokenCount(ready.accountPromptTokensToday)} /{" "}
++                            {formatTokenCount(ready.accountCompletionTokensToday)}
++                          </strong>
 +                        </div>
 +                        <div data-slot="cx-overview-item">
-+                          <span>Token 剩余合计</span>
-+                          <strong>{formatCurrency(tokenSummary().remaining)}</strong>
++                          <span>今日费用</span>
++                          <strong>
++                            {ready.accountQuotaUsedToday === null ? "—" : formatCurrency(ready.accountQuotaUsedToday)}
++                          </strong>
 +                        </div>
 +                        <div data-slot="cx-overview-item">
-+                          <span>Token 今日消耗</span>
-+                          <strong>{formatCurrency(tokenSummary().usedToday)}</strong>
++                          <span>累计费用</span>
++                          <strong>{formatCurrency(ready.accountUsedQuota)}</strong>
 +                        </div>
 +                      </div>
 +                    </div>
@@ -1148,7 +1222,7 @@ index 000000000..acd4c6b08
 +                  <div data-slot="cx-key-col-copy">
 +                    <span data-slot="cx-key-col-title">API Keys</span>
 +                    <span data-slot="cx-key-count">{keys().length}</span>
-+                    <div data-slot="cx-key-col-tip">管理凭据、token 用量与模型能力</div>
++                    <div data-slot="cx-key-col-tip">管理凭据、查看实际 Token 用量与模型能力</div>
 +                  </div>
 +                  {/* [cx] 新增按钮放在标题行右侧；展开表单在标题下、网格上方。 */}
 +                  <ButtonV2 variant="neutral" size="small" icon="plus" onClick={() => setAddingKey((prev) => !prev)}>
