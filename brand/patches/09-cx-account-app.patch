@@ -499,10 +499,10 @@ index 000000000..e93c09034
 +}
 diff --git a/packages/app/src/components/cx-account/cx-account-dialog.tsx b/packages/app/src/components/cx-account/cx-account-dialog.tsx
 new file mode 100644
-index 000000000..5a6d50479
+index 000000000..18eef099e
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-account-dialog.tsx
-@@ -0,0 +1,783 @@
+@@ -0,0 +1,784 @@
 +// [cx] 账户面板（迁自 desktop 包 renderer/balance/balance-panel.tsx，US-005 → US-013）。
 +//
 +// 本文件是账户面板从 desktop 包迁入 @opencode-ai/app 包的落地：改用原生 v2 组件
@@ -708,7 +708,7 @@ index 000000000..5a6d50479
 +                        variant="neutral"
 +                        size="small"
 +                        onClick={() => setConfirmingDelete(true)}
-+                        icon={<Icon name="trash" size="small" />}
++                        icon={<Icon name="xmark-small" size="small" />}
 +                      />
 +                    </TooltipV2>
 +                  }
@@ -723,7 +723,7 @@ index 000000000..5a6d50479
 +                        setConfirmingDelete(false)
 +                        props.onRemove(props.entry.id)
 +                      }}
-+                      icon={<Icon name="check-small" size="small" />}
++                      icon={<Icon name="check" size="small" />}
 +                    />
 +                  </TooltipV2>
 +                  <TooltipV2 value="取消删除" placement="top">
@@ -745,7 +745,7 @@ index 000000000..5a6d50479
 +                variant="contrast"
 +                size="small"
 +                onClick={saveEdit}
-+                icon={<Icon name="check-small" size="small" />}
++                icon={<Icon name="check" size="small" />}
 +              />
 +            </TooltipV2>
 +            <TooltipV2 value="取消编辑" placement="top">
@@ -1177,33 +1177,29 @@ index 000000000..5a6d50479
 +                </div>
 +              </div>
 +
-+              {/* [cx] 账户余额与真实模型 Token 用量总览。API Key 数量只作为同步状态，绝不当作 token 消耗。 */}
-+              <Show
-+                when={
-+                  accountProfile()?.status === "ready"
-+                    ? (accountProfile() as Extract<KeyProfileState, { status: "ready" }>)
-+                    : undefined
-+                }
-+                keyed
-+              >
-+                {(ready) => (
-+                  <section data-slot="cx-summary" aria-label="账户用量总览">
++              {/* [cx] 账户余额与真实模型 Token 用量总览。始终渲染以固定布局，数据未就绪时展示占位，
++                   避免「打开时缺失、数据回来才撑出」导致的抖动。API Key 数量只作为同步状态，绝不当作 token 消耗。 */}
++              {(() => {
++                const ready = accountProfile()
++                const pct = ready ? usedPercent(ready.accountUsedQuota, ready.accountTotalQuota) : 0
++                return (
++                  <section data-slot="cx-summary" aria-label="账户用量总览" data-pending={ready ? undefined : ""}>
 +                    <div data-slot="cx-usage-visual">
 +                      <div
 +                        data-slot="cx-usage-ring"
-+                        style={`--cx-used: ${usedPercent(ready.accountUsedQuota, ready.accountTotalQuota)}`}
++                        style={`--cx-used: ${pct}`}
 +                        role="img"
-+                        aria-label={`账户额度已使用 ${usedPercent(ready.accountUsedQuota, ready.accountTotalQuota)}%`}
++                        aria-label={ready ? `账户额度已使用 ${pct}%` : "账户额度加载中"}
 +                      >
 +                        <div data-slot="cx-usage-ring-inner">
-+                          <strong>{`${usedPercent(ready.accountUsedQuota, ready.accountTotalQuota)}%`}</strong>
++                          <strong>{ready ? `${pct}%` : "—"}</strong>
 +                          <span>账户额度已用</span>
 +                        </div>
 +                      </div>
 +                      <div data-slot="cx-usage-copy">
 +                        <span>可用余额</span>
-+                        <strong>{formatCurrency(ready.accountRemainingQuota)}</strong>
-+                        <small>账户总额 {formatCurrency(ready.accountTotalQuota)}</small>
++                        <strong>{ready ? formatCurrency(ready.accountRemainingQuota) : "—"}</strong>
++                        <small>账户总额 {ready ? formatCurrency(ready.accountTotalQuota) : "—"}</small>
 +                      </div>
 +                    </div>
 +
@@ -1218,30 +1214,35 @@ index 000000000..5a6d50479
 +                      <div data-slot="cx-overview-grid">
 +                        <div data-slot="cx-overview-item">
 +                          <span>今日 Tokens</span>
-+                          <strong>{formatTokenCount(ready.accountTokensUsedToday)}</strong>
++                          <strong>{ready ? formatTokenCount(ready.accountTokensUsedToday) : "—"}</strong>
 +                        </div>
 +                        <div data-slot="cx-overview-item">
 +                          <span>输入 / 输出</span>
 +                          <strong>
-+                            {formatTokenCount(ready.accountPromptTokensToday)} /{" "}
-+                            {formatTokenCount(ready.accountCompletionTokensToday)}
++                            {ready
++                              ? `${formatTokenCount(ready.accountPromptTokensToday)} / ${formatTokenCount(ready.accountCompletionTokensToday)}`
++                              : "—"}
 +                          </strong>
 +                        </div>
 +                        <div data-slot="cx-overview-item">
 +                          <span>今日费用</span>
 +                          <strong>
-+                            {ready.accountQuotaUsedToday === null ? "—" : formatCurrency(ready.accountQuotaUsedToday)}
++                            {ready
++                              ? ready.accountQuotaUsedToday === null
++                                ? "—"
++                                : formatCurrency(ready.accountQuotaUsedToday)
++                              : "—"}
 +                          </strong>
 +                        </div>
 +                        <div data-slot="cx-overview-item">
 +                          <span>累计费用</span>
-+                          <strong>{formatCurrency(ready.accountUsedQuota)}</strong>
++                          <strong>{ready ? formatCurrency(ready.accountUsedQuota) : "—"}</strong>
 +                        </div>
 +                      </div>
 +                    </div>
 +                  </section>
-+                )}
-+              </Show>
++                )
++              })()}
 +
 +              <Show when={notice()}>
 +                <div data-slot="cx-notice">{notice()}</div>
@@ -1467,17 +1468,18 @@ index 000000000..2a4abd208
 +export { CxDialogImport }
 diff --git a/packages/app/src/components/cx-account/cx-account.css b/packages/app/src/components/cx-account/cx-account.css
 new file mode 100644
-index 000000000..6262505b4
+index 000000000..db352b403
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-account.css
-@@ -0,0 +1,795 @@
+@@ -0,0 +1,814 @@
 +/* [cx] 账户工作台：完全复用 OpenCode v2 语义 token，不引入品牌外配色。 */
 +@import "@opencode-ai/ui/v2/button-v2.css";
 +@import "@opencode-ai/ui/v2/icon-button-v2.css";
 +@import "@opencode-ai/ui/v2/text-input-v2.css";
 +@import "@opencode-ai/ui/v2/tooltip-v2.css";
 +
-+/* [cx] 账户弹窗整体自然滚动；Keys 区域不再维护独立滚动层，避免凭据被藏在内部滚动条下。 */
++/* [cx] 账户弹窗固定高度；三个区域（账户头 / 用量总览 / Keys）打开即定位，
++   仅 Keys 列表在内部滚动，key 增多不会向上挤压覆盖上方区域。 */
 +[data-slot="dialog-content"].cx-account-dialog {
 +  overflow: hidden;
 +}
@@ -1486,22 +1488,22 @@ index 000000000..6262505b4
 +  flex: 1;
 +  min-height: 0;
 +  padding: 0 24px 24px;
-+  overflow-x: hidden;
-+  overflow-y: auto;
++  overflow: hidden;
 +}
 +
 +.cx-account-body [data-slot="cx-dashboard"] {
-+  display: grid;
++  display: flex;
 +  min-width: 0;
-+  min-height: 100%;
-+  grid-template-rows: auto auto auto;
-+  align-content: start;
++  min-height: 0;
++  flex: 1;
++  flex-direction: column;
 +  gap: 14px;
 +}
 +
 +.cx-account-body [data-slot="cx-dashboard-head"] {
 +  display: flex;
 +  min-width: 0;
++  flex-shrink: 0;
 +  align-items: center;
 +  justify-content: space-between;
 +  gap: 24px;
@@ -1589,6 +1591,7 @@ index 000000000..6262505b4
 +.cx-account-body [data-slot="cx-summary"] {
 +  display: grid;
 +  min-width: 0;
++  flex-shrink: 0;
 +  grid-template-columns: minmax(260px, 0.8fr) minmax(360px, 1.4fr);
 +  overflow: hidden;
 +  border-radius: 10px;
@@ -1752,7 +1755,8 @@ index 000000000..6262505b4
 +.cx-account-body [data-slot="cx-key-col"] {
 +  display: flex;
 +  min-width: 0;
-+  grid-row: 3;
++  min-height: 0;
++  flex: 1;
 +  flex-direction: column;
 +  border-radius: 10px;
 +  background: var(--v2-background-bg-layer-01);
@@ -1761,6 +1765,7 @@ index 000000000..6262505b4
 +
 +.cx-account-body [data-slot="cx-key-col-head"] {
 +  display: flex;
++  flex-shrink: 0;
 +  align-items: center;
 +  justify-content: space-between;
 +  gap: 16px;
@@ -1779,6 +1784,7 @@ index 000000000..6262505b4
 +}
 +
 +.cx-account-body [data-slot="cx-key-col-form"] {
++  flex-shrink: 0;
 +  padding: 10px 14px 0;
 +}
 +
@@ -1805,9 +1811,13 @@ index 000000000..6262505b4
 +
 +.cx-account-body [data-slot="cx-key-list"] {
 +  display: grid;
++  min-height: 0;
++  flex: 1;
 +  grid-template-columns: minmax(0, 1fr);
++  align-content: start;
 +  gap: 6px;
 +  padding: 8px 10px 10px;
++  overflow-y: auto;
 +}
 +
 +/* 桌面宽度下一行完整呈现一个 Key：身份、指标、额度和操作横向排布。 */
@@ -2233,6 +2243,7 @@ index 000000000..6262505b4
 +}
 +
 +@media (max-width: 480px) {
++  /* 窄屏改为整体自然滚动：各区不再固定高度、Keys 列表不再独立滚动，避免双滚动条。 */
 +  [data-slot="dialog-content"] [data-slot="dialog-body"].cx-account-body {
 +    overflow-y: auto;
 +  }
@@ -2242,6 +2253,15 @@ index 000000000..6262505b4
 +    height: auto;
 +    min-height: 100%;
 +    flex-direction: column;
++  }
++
++  .cx-account-body [data-slot="cx-key-col"] {
++    flex: none;
++    min-height: 0;
++  }
++
++  .cx-account-body [data-slot="cx-key-list"] {
++    overflow-y: visible;
 +  }
 +
 +  .cx-account-body [data-slot="cx-token-stats"] {
