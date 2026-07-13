@@ -561,10 +561,10 @@ index 000000000..4689ed89c
 +}
 diff --git a/packages/app/src/components/cx-account/cx-account-dialog.tsx b/packages/app/src/components/cx-account/cx-account-dialog.tsx
 new file mode 100644
-index 000000000..06f6f9bc5
+index 000000000..957f91833
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-account-dialog.tsx
-@@ -0,0 +1,819 @@
+@@ -0,0 +1,829 @@
 +// [cx] 账户面板（迁自 desktop 包 renderer/balance/balance-panel.tsx，US-005 → US-013）。
 +//
 +// 本文件是账户面板从 desktop 包迁入 @opencode-ai/app 包的落地：改用原生 v2 组件
@@ -630,6 +630,21 @@ index 000000000..06f6f9bc5
 +  }
 +  const displayLabel = () => props.entry.label.trim() || readyProfile()?.tokenName.trim() || "未命名 key"
 +
++  // 徽标（状态/分组/动态倍率/过期）从身份列渲染，不再作为独立网格列，避免撑破卡片列布局。
++  // 统一收敛为一个数组，JSX 用 <For> 渲染；每项带 data-slot 与可选 data-level。
++  const metaTags = (): Array<{ slot: string; text: string; level?: string }> => {
++    const p = readyProfile()
++    if (!p) return []
++    const tags: Array<{ slot: string; text: string; level?: string }> = []
++    const status = keyStatusLabel(p.keyStatus)
++    if (status) tags.push({ slot: "cx-status-tag", text: status, level: "danger" })
++    if (p.keyGroup) tags.push({ slot: "cx-group-tag", text: p.keyGroup })
++    if (p.keyDynamicRatio) tags.push({ slot: "cx-dynamic-tag", text: "动态倍率" })
++    const exp = formatExpiry(p.keyExpiresAt)
++    if (exp.level !== "ok") tags.push({ slot: "cx-expiry-tag", text: exp.text, level: exp.level })
++    return tags
++  }
++
 +  function startEdit() {
 +    setLabelDraft(displayLabel() === "未命名 key" ? "" : displayLabel())
 +    setEditing(true)
@@ -661,6 +676,49 @@ index 000000000..06f6f9bc5
 +        props.onActivate(props.entry)
 +      }}
 +    >
++      {/* [cx] 删除入口移到卡片右上角：常态显示叉，点击后原地展开确认（✓/✕）。 */}
++      <Show when={manageable() && !editing()}>
++        <div data-slot="cx-key-delete-corner" onClick={(e) => e.stopPropagation()}>
++          <Show
++            when={confirmingDelete()}
++            fallback={
++              <TooltipV2 value="删除 Key" placement="top">
++                <IconButtonV2
++                  aria-label="删除 Key"
++                  variant="neutral"
++                  size="small"
++                  onClick={() => setConfirmingDelete(true)}
++                  icon={<Icon name="xmark-small" size="small" />}
++                />
++              </TooltipV2>
++            }
++          >
++            <TooltipV2 value="确认删除" placement="top">
++              <IconButtonV2
++                data-slot="cx-delete-confirm-button"
++                aria-label="确认删除"
++                variant="neutral"
++                size="small"
++                onClick={() => {
++                  setConfirmingDelete(false)
++                  props.onRemove(props.entry.id)
++                }}
++                icon={<Icon name="check" size="small" />}
++              />
++            </TooltipV2>
++            <TooltipV2 value="取消删除" placement="top">
++              <IconButtonV2
++                aria-label="取消删除"
++                variant="neutral"
++                size="small"
++                onClick={() => setConfirmingDelete(false)}
++                icon={<Icon name="close" size="small" />}
++              />
++            </TooltipV2>
++          </Show>
++        </div>
++      </Show>
++
 +      <header data-slot="cx-key-card-head">
 +        <div data-slot="cx-key-card-title">
 +          <Show
@@ -680,6 +738,18 @@ index 000000000..06f6f9bc5
 +                onInput={(e) => setLabelDraft(e.currentTarget.value)}
 +                aria-label="编辑 key 名称"
 +              />
++            </div>
++          </Show>
++          {/* 状态 / 分组 / 倍率 / 过期 徽标行，随身份列渲染，不占独立网格列。 */}
++          <Show when={!editing() && metaTags().length > 0}>
++            <div data-slot="cx-key-meta">
++              <For each={metaTags()}>
++                {(tag) => (
++                  <Tag data-slot={tag.slot} data-level={tag.level}>
++                    {tag.text}
++                  </Tag>
++                )}
++              </For>
 +            </div>
 +          </Show>
 +        </div>
@@ -710,30 +780,8 @@ index 000000000..06f6f9bc5
 +            // 优先用后端 profile 的白名单，回退到本地缓存的 models 数。
 +            const modelText = () =>
 +              ready.keyModelLimitsEnabled ? String(ready.keyModelLimits.length) : props.entry.models.length || "全部"
-+            const expiry = () => formatExpiry(ready.keyExpiresAt)
-+            const statusText = () => keyStatusLabel(ready.keyStatus)
 +            return (
 +              <>
-+                {/* 状态 / 分组 / 倍率 / 过期 徽标行。仅在有内容时渲染各徽标。 */}
-+                <div data-slot="cx-key-meta">
-+                  <Show when={statusText()}>
-+                    <Tag data-slot="cx-status-tag" data-level="danger">
-+                      {statusText()}
-+                    </Tag>
-+                  </Show>
-+                  <Show when={ready.keyGroup}>
-+                    <Tag data-slot="cx-group-tag">{ready.keyGroup}</Tag>
-+                  </Show>
-+                  <Show when={ready.keyDynamicRatio}>
-+                    <Tag data-slot="cx-dynamic-tag">动态倍率</Tag>
-+                  </Show>
-+                  <Show when={expiry().level !== "ok"}>
-+                    <Tag data-slot="cx-expiry-tag" data-level={expiry().level}>
-+                      {expiry().text}
-+                    </Tag>
-+                  </Show>
-+                </div>
-+
 +                <div data-slot="cx-token-stats">
 +                  <div data-slot="cx-token-stat">
 +                    <span>今日 Tokens</span>
@@ -780,60 +828,22 @@ index 000000000..06f6f9bc5
 +        </Match>
 +      </Switch>
 +
-+      {/* [cx] US-009: 整行负责激活切换；操作区只保留带提示的编辑/删除图标按钮。 */}
++      {/* [cx] US-009: 编辑操作固定在行末列。删除入口已移到卡片右上角（见 header 上方）。
++          编辑态时行末显示保存 / 取消；非编辑态只显示编辑名称按钮。 */}
 +      <Show when={manageable()}>
 +        <div data-slot="cx-key-actions" onClick={(e) => e.stopPropagation()}>
 +          <Show
 +            when={editing()}
 +            fallback={
-+              <>
-+                <TooltipV2 value="编辑名称" placement="top">
-+                  <IconButtonV2
-+                    aria-label="编辑名称"
-+                    variant="neutral"
-+                    size="small"
-+                    onClick={startEdit}
-+                    icon={<Icon name="edit" size="small" />}
-+                  />
-+                </TooltipV2>
-+                <Show
-+                  when={confirmingDelete()}
-+                  fallback={
-+                    <TooltipV2 value="删除 Key" placement="top">
-+                      <IconButtonV2
-+                        aria-label="删除 Key"
-+                        variant="neutral"
-+                        size="small"
-+                        onClick={() => setConfirmingDelete(true)}
-+                        icon={<Icon name="xmark-small" size="small" />}
-+                      />
-+                    </TooltipV2>
-+                  }
-+                >
-+                  <TooltipV2 value="确认删除" placement="top">
-+                    <IconButtonV2
-+                      data-slot="cx-delete-confirm-button"
-+                      aria-label="确认删除"
-+                      variant="neutral"
-+                      size="small"
-+                      onClick={() => {
-+                        setConfirmingDelete(false)
-+                        props.onRemove(props.entry.id)
-+                      }}
-+                      icon={<Icon name="check" size="small" />}
-+                    />
-+                  </TooltipV2>
-+                  <TooltipV2 value="取消删除" placement="top">
-+                    <IconButtonV2
-+                      aria-label="取消删除"
-+                      variant="neutral"
-+                      size="small"
-+                      onClick={() => setConfirmingDelete(false)}
-+                      icon={<Icon name="close" size="small" />}
-+                    />
-+                  </TooltipV2>
-+                </Show>
-+              </>
++              <TooltipV2 value="编辑名称" placement="top">
++                <IconButtonV2
++                  aria-label="编辑名称"
++                  variant="neutral"
++                  size="small"
++                  onClick={startEdit}
++                  icon={<Icon name="edit" size="small" />}
++                />
++              </TooltipV2>
 +            }
 +          >
 +            <TooltipV2 value="保存名称" placement="top">
@@ -1565,10 +1575,10 @@ index 000000000..2a4abd208
 +export { CxDialogImport }
 diff --git a/packages/app/src/components/cx-account/cx-account.css b/packages/app/src/components/cx-account/cx-account.css
 new file mode 100644
-index 000000000..3c2918faa
+index 000000000..5842e1ee6
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-account.css
-@@ -0,0 +1,866 @@
+@@ -0,0 +1,895 @@
 +/* [cx] 账户工作台：完全复用 OpenCode v2 语义 token，不引入品牌外配色。 */
 +@import "@opencode-ai/ui/v2/button-v2.css";
 +@import "@opencode-ai/ui/v2/icon-button-v2.css";
@@ -1917,14 +1927,17 @@ index 000000000..3c2918faa
 +  overflow-y: auto;
 +}
 +
-+/* 桌面宽度下一行完整呈现一个 Key：身份、指标、额度和操作横向排布。 */
++/* 桌面宽度下一行完整呈现一个 Key：身份、指标、额度和操作横向排布。
++   身份列可伸缩（1fr），指标列固定宽度不被挤压，额度列与操作列固定，
++   右上角删除入口用绝对定位，故右侧留出 padding 让其不压住操作区。 */
 +.cx-account-body [data-slot="cx-key-card"] {
++  position: relative;
 +  display: grid;
 +  min-width: 0;
-+  grid-template-columns: minmax(150px, 1.2fr) minmax(300px, 2fr) minmax(170px, 1.2fr) auto;
++  grid-template-columns: minmax(140px, 1fr) auto minmax(160px, 190px) auto;
 +  align-items: center;
-+  gap: 14px;
-+  padding: 8px 10px;
++  gap: 16px;
++  padding: 10px 34px 10px 12px;
 +  border-radius: 7px;
 +  background: var(--v2-background-bg-layer-02);
 +  box-shadow: inset 0 0 0 0.5px var(--v2-border-border-muted);
@@ -1952,6 +1965,25 @@ index 000000000..3c2918faa
 +  box-shadow:
 +    inset 3px 0 0 var(--v2-background-bg-accent),
 +    inset 0 0 0 0.5px var(--v2-border-border-focus);
++}
++
++/* [cx] 删除入口固定在卡片右上角，绝对定位不占网格列（卡片右侧已留 34px padding）。
++   点击原地展开确认（✓/✕），确认按钮同处渲染。 */
++.cx-account-body [data-slot="cx-key-delete"] {
++  position: absolute;
++  top: 6px;
++  right: 6px;
++  z-index: 1;
++  display: flex;
++  gap: 4px;
++  opacity: 0.72;
++  transition: opacity 120ms ease;
++}
++
++.cx-account-body [data-slot="cx-key-card"]:hover [data-slot="cx-key-delete"],
++.cx-account-body [data-slot="cx-key-card"]:focus-within [data-slot="cx-key-delete"],
++.cx-account-body [data-slot="cx-key-card"][data-active] [data-slot="cx-key-delete"] {
++  opacity: 1;
 +}
 +
 +.cx-account-body [data-slot="cx-key-card-head"],
@@ -2010,18 +2042,23 @@ index 000000000..3c2918faa
 +  font-weight: 530;
 +}
 +
-+/* [cx] 单行 Key 项内的紧凑指标组。 */
++/* [cx] 单行 Key 项内的紧凑指标组：4 个等宽固定列，宽度不随内容伸缩，
++   避免长数字把某格撑大挤压其他格。固定高度保证有无「输入/输出」副行时行高一致。 */
 +.cx-account-body [data-slot="cx-token-stats"] {
 +  display: grid;
-+  min-width: 0;
-+  grid-template-columns: repeat(4, minmax(56px, 1fr));
++  grid-template-columns: repeat(4, 72px);
 +  gap: 6px;
++  min-height: 40px;
++  align-items: center;
 +}
 +
 +.cx-account-body [data-slot="cx-token-stat"] {
 +  display: flex;
++  width: 72px;
 +  min-width: 0;
++  height: 40px;
 +  flex-direction: column;
++  justify-content: center;
 +  gap: 2px;
 +  padding-left: 8px;
 +  border-left: 0.5px solid var(--v2-border-border-base);
@@ -2304,8 +2341,10 @@ index 000000000..3c2918faa
 +}
 +
 +@media (max-width: 900px) {
++  /* 主布局为「身份 | 指标(等宽固定) | 额度 | 编辑」三列 + 右上角删除；
++     中等宽度只需收紧列间距与额度列宽，指标列宽固定不参与压缩。 */
 +  .cx-account-body [data-slot="cx-key-card"] {
-+    grid-template-columns: minmax(130px, 1fr) minmax(240px, 1.8fr) minmax(145px, 1fr) auto;
++    grid-template-columns: minmax(130px, 1fr) auto minmax(140px, 170px) auto;
 +    gap: 10px;
 +  }
 +}
