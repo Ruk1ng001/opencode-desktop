@@ -1575,10 +1575,10 @@ index 000000000..2a4abd208
 +export { CxDialogImport }
 diff --git a/packages/app/src/components/cx-account/cx-account.css b/packages/app/src/components/cx-account/cx-account.css
 new file mode 100644
-index 000000000..5842e1ee6
+index 000000000..a10037030
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-account.css
-@@ -0,0 +1,895 @@
+@@ -0,0 +1,875 @@
 +/* [cx] 账户工作台：完全复用 OpenCode v2 语义 token，不引入品牌外配色。 */
 +@import "@opencode-ai/ui/v2/button-v2.css";
 +@import "@opencode-ai/ui/v2/icon-button-v2.css";
@@ -1934,6 +1934,7 @@ index 000000000..5842e1ee6
 +  position: relative;
 +  display: grid;
 +  min-width: 0;
++  min-height: 64px;
 +  grid-template-columns: minmax(140px, 1fr) auto minmax(160px, 190px) auto;
 +  align-items: center;
 +  gap: 16px;
@@ -1968,8 +1969,10 @@ index 000000000..5842e1ee6
 +}
 +
 +/* [cx] 删除入口固定在卡片右上角，绝对定位不占网格列（卡片右侧已留 34px padding）。
-+   点击原地展开确认（✓/✕），确认按钮同处渲染。 */
-+.cx-account-body [data-slot="cx-key-delete"] {
++   点击原地展开确认（✓/✕），确认按钮同处渲染。
++   注意：TSX 里 data-slot 是 cx-key-delete-corner，选择器必须与之一致，
++   否则该 div 退化成普通网格子项、占掉一列，把整行挤乱。 */
++.cx-account-body [data-slot="cx-key-delete-corner"] {
 +  position: absolute;
 +  top: 6px;
 +  right: 6px;
@@ -1980,9 +1983,9 @@ index 000000000..5842e1ee6
 +  transition: opacity 120ms ease;
 +}
 +
-+.cx-account-body [data-slot="cx-key-card"]:hover [data-slot="cx-key-delete"],
-+.cx-account-body [data-slot="cx-key-card"]:focus-within [data-slot="cx-key-delete"],
-+.cx-account-body [data-slot="cx-key-card"][data-active] [data-slot="cx-key-delete"] {
++.cx-account-body [data-slot="cx-key-card"]:hover [data-slot="cx-key-delete-corner"],
++.cx-account-body [data-slot="cx-key-card"]:focus-within [data-slot="cx-key-delete-corner"],
++.cx-account-body [data-slot="cx-key-card"][data-active] [data-slot="cx-key-delete-corner"] {
 +  opacity: 1;
 +}
 +
@@ -2017,29 +2020,6 @@ index 000000000..5842e1ee6
 +  color: var(--v2-text-text-faint);
 +  font-family: var(--font-mono, monospace);
 +  font-size: 11px;
-+}
-+
-+.cx-account-body [data-slot="cx-mini-avatar"],
-+.cx-account-body [data-slot="cx-mini-avatar-fallback"] {
-+  width: 22px;
-+  height: 22px;
-+  flex-shrink: 0;
-+  border: 0.5px solid var(--v2-border-border-base);
-+  border-radius: 5px;
-+}
-+
-+.cx-account-body [data-slot="cx-mini-avatar"] {
-+  object-fit: cover;
-+}
-+
-+.cx-account-body [data-slot="cx-mini-avatar-fallback"] {
-+  display: flex;
-+  align-items: center;
-+  justify-content: center;
-+  background: var(--v2-background-bg-layer-03);
-+  color: var(--v2-text-text-muted);
-+  font-size: 10px;
-+  font-weight: 530;
 +}
 +
 +/* [cx] 单行 Key 项内的紧凑指标组：4 个等宽固定列，宽度不随内容伸缩，
