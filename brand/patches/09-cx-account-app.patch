@@ -1,9 +1,9 @@
 diff --git a/packages/app/src/components/cx-account/cx-account-api.ts b/packages/app/src/components/cx-account/cx-account-api.ts
 new file mode 100644
-index 000000000..e93c09034
+index 000000000..4689ed89c
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-account-api.ts
-@@ -0,0 +1,493 @@
+@@ -0,0 +1,555 @@
 +// [cx] 账户面板数据层（迁自 desktop 包 renderer/balance/balance-panel.tsx，US-005 → US-013）。
 +//
 +// 纯数据层：零 UI import（不 import solid-js / 上游组件），可离线 typecheck。承载：
@@ -156,6 +156,42 @@ index 000000000..e93c09034
 +  return Math.min(100, Math.max(0, Math.round((tokenUsed / granted) * 100)))
 +}
 +
++// [cx] key 过期展示：把秒级时间戳转成人类可读文案 + 告警级别，供卡片过期提示用。
++//   - 0（永不过期）→ level "ok"，text "永不过期"
++//   - 已过期（expiresAt <= now）→ level "expired"，text "已过期"
++//   - 7 天内到期 → level "soon"，text "N 天后过期"（不足 1 天显示「今日到期」）
++//   - 更远 → level "ok"，text 本地日期（YYYY-MM-DD）
++// level 供渲染层决定是否用告警色；纯函数、不依赖时区库，用本地时间。
++export function formatExpiry(expiresAt: number): { text: string; level: "ok" | "soon" | "expired" } {
++  if (!Number.isFinite(expiresAt) || expiresAt <= 0) return { text: "永不过期", level: "ok" }
++  const nowSec = Math.floor(Date.now() / 1000)
++  if (expiresAt <= nowSec) return { text: "已过期", level: "expired" }
++  const daysLeft = Math.ceil((expiresAt - nowSec) / 86400)
++  if (daysLeft <= 7) {
++    return { text: daysLeft <= 1 ? "今日到期" : `${daysLeft} 天后过期`, level: "soon" }
++  }
++  const d = new Date(expiresAt * 1000)
++  const yyyy = d.getFullYear()
++  const mm = String(d.getMonth() + 1).padStart(2, "0")
++  const dd = String(d.getDate()).padStart(2, "0")
++  return { text: `${yyyy}-${mm}-${dd} 到期`, level: "ok" }
++}
++
++// [cx] key 状态文案：new-api TokenStatus（1 启用 / 2 禁用 / 3 过期 / 4 耗尽）。
++// 仅在非启用态需要在卡片上打徽标；启用态返回空串（调用方据此不渲染徽标）。
++export function keyStatusLabel(status: number): string {
++  switch (status) {
++    case 2:
++      return "已禁用"
++    case 3:
++      return "已过期"
++    case 4:
++      return "额度耗尽"
++    default:
++      return ""
++  }
++}
++
 +// [cx] 多 provider：由 key.id 派生稳定的 opencode providerID。**必须与主进程 server.ts /
 +// store-channel-keys.ts 的 channelProviderId 完全一致**（`newapi-<id前8位>`），否则派发的
 +// cx:select-provider 事件匹配不到 provider，切换不生效——硬约束。
@@ -188,6 +224,15 @@ index 000000000..e93c09034
 +  keyPromptTokensToday: number | null
 +  keyCompletionTokensToday: number | null
 +  keyUnlimitedQuota: boolean
++  // 当前 key 生效的定价分组，及该分组是否走二开的动态倍率（auto 分组恒 false）。
++  keyGroup: string
++  keyDynamicRatio: boolean
++  // 当前 key 的状态（1 启用 / 2 禁用 / 3 过期 / 4 耗尽）与过期时间（秒；0 表示永不过期）。
++  keyStatus: number
++  keyExpiresAt: number
++  // 当前 key 的模型白名单：未启用时 keyModelLimits 为空数组、表示不限模型。
++  keyModelLimitsEnabled: boolean
++  keyModelLimits: string[]
 +  requestCountToday: number | null
 +  // [cx] 该 key 在 new-api 侧的 token.Name。若本地没填名称，UI 直接用此字段展示，新增时也会回填本地。
 +  tokenName: string
@@ -215,6 +260,12 @@ index 000000000..e93c09034
 +  key_prompt_tokens_today?: number
 +  key_completion_tokens_today?: number
 +  key_unlimited_quota?: boolean
++  key_group?: string
++  key_dynamic_ratio?: boolean
++  key_status?: number
++  key_expires_at?: number
++  key_model_limits_enabled?: boolean
++  key_model_limits?: string[]
 +  request_count_today?: number
 +  // 旧版二开字段兼容：新后端应优先返回上面的 account_* / key_* 明确命名。
 +  quota?: number
@@ -399,6 +450,17 @@ index 000000000..e93c09034
 +      keyCompletionTokensToday:
 +        typeof p.key_completion_tokens_today === "number" ? p.key_completion_tokens_today : null,
 +      keyUnlimitedQuota: p.key_unlimited_quota ?? p.unlimited ?? false,
++      // 分组与动态倍率：缺失给安全默认（空分组 / 非动态）。
++      keyGroup: typeof p.key_group === "string" ? p.key_group : "",
++      keyDynamicRatio: p.key_dynamic_ratio === true,
++      // 状态默认按「启用」(1)，过期时间默认 0（永不过期）——旧后端不返回时不误报异常态。
++      keyStatus: typeof p.key_status === "number" ? p.key_status : 1,
++      keyExpiresAt: typeof p.key_expires_at === "number" ? p.key_expires_at : 0,
++      // 模型白名单：仅当后端明确 enabled 且返回数组时才视为启用，否则按「不限模型」。
++      keyModelLimitsEnabled: p.key_model_limits_enabled === true,
++      keyModelLimits: Array.isArray(p.key_model_limits)
++        ? p.key_model_limits.filter((m): m is string => typeof m === "string" && m.length > 0)
++        : [],
 +      requestCountToday: typeof p.request_count_today === "number" ? p.request_count_today : null,
 +      tokenName: typeof p.key_name === "string" ? p.key_name : typeof p.token_name === "string" ? p.token_name : "",
 +    }
@@ -499,10 +561,10 @@ index 000000000..e93c09034
 +}
 diff --git a/packages/app/src/components/cx-account/cx-account-dialog.tsx b/packages/app/src/components/cx-account/cx-account-dialog.tsx
 new file mode 100644
-index 000000000..18eef099e
+index 000000000..06f6f9bc5
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-account-dialog.tsx
-@@ -0,0 +1,784 @@
+@@ -0,0 +1,819 @@
 +// [cx] 账户面板（迁自 desktop 包 renderer/balance/balance-panel.tsx，US-005 → US-013）。
 +//
 +// 本文件是账户面板从 desktop 包迁入 @opencode-ai/app 包的落地：改用原生 v2 组件
@@ -531,7 +593,9 @@ index 000000000..18eef099e
 +  fetchProfileWith,
 +  fetchTokenName,
 +  formatCurrency,
++  formatExpiry,
 +  formatTokenCount,
++  keyStatusLabel,
 +  keyUsedPercent,
 +  loadChannelState,
 +  maskKey,
@@ -641,45 +705,78 @@ index 000000000..18eef099e
 +          when={state().status === "ready" ? (state() as Extract<KeyProfileState, { status: "ready" }>) : undefined}
 +          keyed
 +        >
-+          {(ready) => (
-+            <>
-+              <div data-slot="cx-token-stats">
-+                <div data-slot="cx-token-stat">
-+                  <span>今日 Tokens</span>
-+                  <strong>{formatTokenCount(ready.keyTokensUsedToday)}</strong>
++          {(ready) => {
++            // 有效模型数：白名单启用时取白名单长度，否则视为「全部」（不限模型）。
++            // 优先用后端 profile 的白名单，回退到本地缓存的 models 数。
++            const modelText = () =>
++              ready.keyModelLimitsEnabled ? String(ready.keyModelLimits.length) : props.entry.models.length || "全部"
++            const expiry = () => formatExpiry(ready.keyExpiresAt)
++            const statusText = () => keyStatusLabel(ready.keyStatus)
++            return (
++              <>
++                {/* 状态 / 分组 / 倍率 / 过期 徽标行。仅在有内容时渲染各徽标。 */}
++                <div data-slot="cx-key-meta">
++                  <Show when={statusText()}>
++                    <Tag data-slot="cx-status-tag" data-level="danger">
++                      {statusText()}
++                    </Tag>
++                  </Show>
++                  <Show when={ready.keyGroup}>
++                    <Tag data-slot="cx-group-tag">{ready.keyGroup}</Tag>
++                  </Show>
++                  <Show when={ready.keyDynamicRatio}>
++                    <Tag data-slot="cx-dynamic-tag">动态倍率</Tag>
++                  </Show>
++                  <Show when={expiry().level !== "ok"}>
++                    <Tag data-slot="cx-expiry-tag" data-level={expiry().level}>
++                      {expiry().text}
++                    </Tag>
++                  </Show>
 +                </div>
-+                <div data-slot="cx-token-stat">
-+                  <span>今日费用</span>
-+                  <strong>{ready.keyQuotaUsedToday === null ? "—" : formatCurrency(ready.keyQuotaUsedToday)}</strong>
-+                </div>
-+                <div data-slot="cx-token-stat">
-+                  <span>累计费用</span>
-+                  <strong>{formatCurrency(ready.keyUsedQuota)}</strong>
-+                </div>
-+                <div data-slot="cx-token-stat">
-+                  <span>模型</span>
-+                  <strong>{props.entry.models.length || "—"}</strong>
-+                </div>
-+              </div>
 +
-+              <div data-slot="cx-key-quota">
-+                <Show when={!ready.keyUnlimitedQuota} fallback={<Tag data-slot="cx-unlimited-tag">额度不限</Tag>}>
-+                  <div data-slot="cx-key-bar-row">
-+                    <span>
-+                      额度 {keyUsedPercent(ready.keyUsedQuota, ready.keyRemainingQuota)}% · 剩余{" "}
-+                      {formatCurrency(ready.keyRemainingQuota)}
-+                    </span>
-+                    <div data-slot="cx-key-bar-track">
-+                      <div
-+                        data-slot="cx-key-bar-fill"
-+                        style={{ width: `${keyUsedPercent(ready.keyUsedQuota, ready.keyRemainingQuota)}%` }}
-+                      />
-+                    </div>
++                <div data-slot="cx-token-stats">
++                  <div data-slot="cx-token-stat">
++                    <span>今日 Tokens</span>
++                    <strong>{formatTokenCount(ready.keyTokensUsedToday)}</strong>
++                    <Show when={ready.keyPromptTokensToday !== null || ready.keyCompletionTokensToday !== null}>
++                      <small data-slot="cx-token-io">
++                        ↑{formatTokenCount(ready.keyPromptTokensToday)} ↓{formatTokenCount(ready.keyCompletionTokensToday)}
++                      </small>
++                    </Show>
 +                  </div>
-+                </Show>
-+              </div>
-+            </>
-+          )}
++                  <div data-slot="cx-token-stat">
++                    <span>今日费用</span>
++                    <strong>{ready.keyQuotaUsedToday === null ? "—" : formatCurrency(ready.keyQuotaUsedToday)}</strong>
++                  </div>
++                  <div data-slot="cx-token-stat">
++                    <span>累计费用</span>
++                    <strong>{formatCurrency(ready.keyUsedQuota)}</strong>
++                  </div>
++                  <div data-slot="cx-token-stat">
++                    <span>模型</span>
++                    <strong>{modelText()}</strong>
++                  </div>
++                </div>
++
++                <div data-slot="cx-key-quota">
++                  <Show when={!ready.keyUnlimitedQuota} fallback={<Tag data-slot="cx-unlimited-tag">额度不限</Tag>}>
++                    <div data-slot="cx-key-bar-row">
++                      <span>
++                        额度 {keyUsedPercent(ready.keyUsedQuota, ready.keyRemainingQuota)}% · 剩余{" "}
++                        {formatCurrency(ready.keyRemainingQuota)}
++                      </span>
++                      <div data-slot="cx-key-bar-track">
++                        <div
++                          data-slot="cx-key-bar-fill"
++                          style={{ width: `${keyUsedPercent(ready.keyUsedQuota, ready.keyRemainingQuota)}%` }}
++                        />
++                      </div>
++                    </div>
++                  </Show>
++                </div>
++              </>
++            )
++          }}
 +        </Match>
 +      </Switch>
 +
@@ -1468,10 +1565,10 @@ index 000000000..2a4abd208
 +export { CxDialogImport }
 diff --git a/packages/app/src/components/cx-account/cx-account.css b/packages/app/src/components/cx-account/cx-account.css
 new file mode 100644
-index 000000000..db352b403
+index 000000000..3c2918faa
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-account.css
-@@ -0,0 +1,814 @@
+@@ -0,0 +1,866 @@
 +/* [cx] 账户工作台：完全复用 OpenCode v2 语义 token，不引入品牌外配色。 */
 +@import "@opencode-ai/ui/v2/button-v2.css";
 +@import "@opencode-ai/ui/v2/icon-button-v2.css";
@@ -2024,6 +2121,58 @@ index 000000000..db352b403
 +.cx-account-body [data-slot="cx-unlimited-tag"] {
 +  width: fit-content;
 +  margin: 0;
++}
++
++/* [cx] key 徽标行：状态 / 分组 / 动态倍率 / 过期。小徽标横向排列，可换行。 */
++.cx-account-body [data-slot="cx-key-meta"] {
++  display: flex;
++  flex-wrap: wrap;
++  gap: 6px;
++  margin-bottom: 12px;
++}
++
++.cx-account-body [data-slot="cx-key-meta"]:empty {
++  display: none;
++  margin-bottom: 0;
++}
++
++/* 分组徽标：中性色，标注当前 key 生效的定价分组。 */
++.cx-account-body [data-slot="cx-group-tag"] {
++  margin: 0;
++}
++
++/* 动态倍率徽标：accent 色，强调该 key 走渠道动态倍率而非固定倍率。 */
++.cx-account-body [data-slot="cx-dynamic-tag"] {
++  margin: 0;
++  background: var(--v2-background-bg-accent);
++  color: var(--v2-text-text-on-accent, var(--v2-text-text-base));
++}
++
++/* 状态徽标（禁用 / 过期 / 耗尽）与过期告警徽标：按 level 上色。
++   danger（已禁用 / 已过期 / 耗尽）走危险色；soon（临近过期）走警示色。 */
++.cx-account-body [data-slot="cx-status-tag"],
++.cx-account-body [data-slot="cx-expiry-tag"] {
++  margin: 0;
++}
++
++.cx-account-body [data-slot="cx-status-tag"][data-level="danger"],
++.cx-account-body [data-slot="cx-expiry-tag"][data-level="expired"] {
++  background: var(--v2-state-bg-danger);
++  color: var(--v2-state-fg-danger);
++}
++
++.cx-account-body [data-slot="cx-expiry-tag"][data-level="soon"] {
++  background: var(--v2-state-bg-warning, var(--v2-background-bg-layer-04));
++  color: var(--v2-state-fg-warning, var(--v2-text-text-base));
++}
++
++/* 今日 Tokens 的输入 / 输出拆分副行：muted 小字，附在合计下方。 */
++.cx-account-body [data-slot="cx-token-io"] {
++  font-size: 10px;
++  font-weight: 500;
++  color: var(--v2-text-text-muted);
++  font-variant-numeric: tabular-nums;
++  white-space: nowrap;
 +}
 +
 +.cx-account-body [data-slot="cx-add-form"] {
