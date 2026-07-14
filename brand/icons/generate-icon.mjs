@@ -1,9 +1,11 @@
-// [cx] Dokng 品牌图标生成器：字母 D 圆角方块（蓝色渐变底 + 白色 D）。
+// [cx] Dokng 品牌图标生成器：以同目录的 logo.svg 为单一数据源，渲染成多尺寸 PNG。
 //
-// 依赖 opencode 的 node_modules 里的 sharp（仓库内已装），把内联 SVG 渲染成多尺寸 PNG，
+// 依赖 opencode 的 node_modules 里的 sharp（仓库内已装），把 logo.svg 渲染成多尺寸 PNG，
 // 再手工打包成 .ico（Windows）/ .icns（macOS）——二者都支持「嵌入 PNG」子图，无需额外的
 // ico/icns 编码库。输出覆盖同目录下的 icon.png / icon.ico / icon.icns（保持文件名，
 // electron-builder.brand.ts 直接消费这些路径）。
+//
+// 换 logo：替换同目录的 logo.svg 后重跑本脚本即可，无需改代码。
 //
 // 运行：node brand/icons/generate-icon.mjs
 //   （sharp 从 opencode/node_modules 解析，见下方 require 路径处理）
@@ -11,46 +13,51 @@
 import { createRequire } from "node:module"
 import { fileURLToPath } from "node:url"
 import { dirname, join } from "node:path"
-import { writeFileSync } from "node:fs"
+import { readFileSync, writeFileSync } from "node:fs"
 
 const here = dirname(fileURLToPath(import.meta.url))
-// sharp 装在 opencode submodule 的 node_modules 下，用其 package.json 作为解析基点。
-const require = createRequire(join(here, "../../opencode/package.json"))
-const sharp = require("sharp")
+// sharp 是 opencode desktop 包的依赖（packages/desktop/package.json 声明 "sharp"），
+// 装在 submodule 的 node_modules 下。用 desktop 包的 package.json 作为解析基点；
+// 找不到时回退到 submodule 根（不同 bun install 布局下 node_modules 提升位置可能不同）。
+function resolveSharp() {
+  const bases = [
+    join(here, "../../opencode/packages/desktop/package.json"),
+    join(here, "../../opencode/package.json"),
+  ]
+  for (const base of bases) {
+    try {
+      return createRequire(base)("sharp")
+    } catch {
+      // 尝试下一个基点
+    }
+  }
+  throw new Error(
+    "找不到 sharp。请先在 opencode submodule 装依赖：cd opencode && bun install（sharp 为 desktop 包依赖）。",
+  )
+}
+const sharp = resolveSharp()
 
-// 品牌主色（取自参考 HTML 的 --primary #3b6ef5），渐变到更深的蓝做立体感。
-const BLUE_TOP = "#4a7bff"
-const BLUE_BOTTOM = "#3b6ef5"
+// 源 logo（矢量，单一数据源）。同目录的 logo.svg，换 logo 只替换此文件后重跑脚本。
+const LOGO_SVG = readFileSync(join(here, "logo.svg"), "utf8")
 
-// 圆角方块 + 居中白色字母 D 的 SVG。viewBox 1024，圆角比例贴近 macOS/现代应用图标观感。
-// D 用路径绘制（竖线 + 右侧半圆弧组成的经典 D 造型），保证任意尺寸缩放清晰、无字体依赖。
+// 按目标尺寸生成 SVG：把根 <svg> 的 width/height 改成目标像素（viewBox 不动，保持矢量比例），
+// 让 sharp 每个尺寸都从矢量重渲，任意尺寸都清晰、不从小图放大糊化。
 function iconSvg(size) {
-  const r = Math.round(size * 0.225) // 圆角半径（约 macOS squircle 观感）
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 1024 1024">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="${BLUE_TOP}"/>
-      <stop offset="1" stop-color="${BLUE_BOTTOM}"/>
-    </linearGradient>
-  </defs>
-  <rect x="0" y="0" width="1024" height="1024" rx="${Math.round((r / size) * 1024)}" ry="${Math.round((r / size) * 1024)}" fill="url(#bg)"/>
-  <!-- 字母 D：外形为「竖直左边 + 右侧半圆」，用偶奇填充挖空内部形成字腔。 -->
-  <path fill="#ffffff" fill-rule="evenodd"
-        d="M320 260
-           h190
-           a252 252 0 0 1 0 504
-           h-190
-           z
-           M420 360
-           v304
-           h90
-           a152 152 0 0 0 0 -304
-           z"/>
-</svg>`
+  return LOGO_SVG.replace(
+    /<svg\b[^>]*>/,
+    (tag) =>
+      tag
+        .replace(/\swidth="[^"]*"/, ` width="${size}"`)
+        .replace(/\sheight="[^"]*"/, ` height="${size}"`),
+  )
 }
 
 async function renderPng(size) {
-  return await sharp(Buffer.from(iconSvg(size))).resize(size, size).png().toBuffer()
+  // density 提高栅格化精度：viewBox 仅 48，低 density 下滤镜/描边会发虚；按尺寸放大 density。
+  return await sharp(Buffer.from(iconSvg(size)), { density: Math.max(72, Math.round(size * 1.5)) })
+    .resize(size, size)
+    .png()
+    .toBuffer()
 }
 
 // ── ICO 打包（Windows）：ICONDIR + 每尺寸 ICONDIRENTRY，图像数据用 PNG 原样嵌入 ──
