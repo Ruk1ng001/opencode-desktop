@@ -14,7 +14,7 @@ index 5d25be209..6a311bf04 100644
 +// [cx] 内置默认渠道地址：未配置 NEWAPI_BASE_URL 时（如未设 CI Secret），回退到内置中转站。
 +// 必须带 /v1（OpenAI 兼容路径）：openai-compatible SDK 以 <base>/chat/completions 发请求，
 +// 模型查询走 <base>/models（见 balance-panel 的 deriveModelsUrl）。配了 Secret 则以 Secret 为准。
-+const DEFAULT_NEWAPI_BASE_URL = "https://api.997269.xyz/v1"
++const DEFAULT_NEWAPI_BASE_URL = "https://dokng.com/v1"
 +
 +// [cx] US-006: 把 US-003 注入的同名渠道变量在构建期喂给 renderer（浏览器上下文读不到
 +// process.env）。baseURL 缺失回退内置默认；key 缺失即空串，余额面板据此显示「未配置凭据」态。

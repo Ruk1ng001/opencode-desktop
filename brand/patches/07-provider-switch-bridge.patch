@@ -105,7 +105,7 @@ index fd9d16b90..85ab965f9 100644
        helpLabel={() => language.t("sidebar.help")}
 -      onOpenHelp={() => platform.openLink("https://opencode.ai/desktop-feedback")}
 +      // [cx] 问号帮助入口改跳品牌站点（Dokng），替换上游 opencode 反馈页。
-+      onOpenHelp={() => platform.openLink("https://api.997269.xyz/")}
++      onOpenHelp={() => platform.openLink("https://dokng.com/")}
 +      renderAccountButton={
 +        // [cx] 桌面端账户入口：挂在侧边栏底部（settings / help 同排），点击用同作用域的
 +        // useDialog() 直接弹出账户面板（面板已迁入 app 包，见 cx-account/）。动态 import

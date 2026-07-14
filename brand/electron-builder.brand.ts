@@ -28,6 +28,12 @@ const brandedAppId = (base.appId ?? UPSTREAM_APP_ID_PREFIX).replace(UPSTREAM_APP
 // 上游 productName 形如 "OpenCode" / "OpenCode Dev" / "OpenCode Beta"。
 const brandedProductName = (base.productName ?? UPSTREAM_PRODUCT_NAME).replace(UPSTREAM_PRODUCT_NAME, brand.productName)
 
+// 上游 artifactName 写死 "opencode-desktop-${os}-${arch}.${ext}"，产物文件名带 opencode-desktop
+// 前缀。用 brand.json 的 binName 替换前缀（与读 appId/productName 同源），产物如
+// dokng-linux-x86_64.AppImage。注意 ${os}/${arch}/${ext} 是 electron-builder 的模板占位符
+// （非 JS 插值），用普通字符串拼接保留字面量，仅 JS 侧替换 binName 前缀。
+const brandedArtifactName = brand.binName + "-${os}-${arch}.${ext}"
+
 // 无签名凭据时的降级开关（CI 首跑 / 本地验证用）。CX_UNSIGNED=1 时：
 //   - macOS：关闭公证（notarize）与 hardenedRuntime、不签名（identity:null），否则
 //     无 Apple 证书 / API Key 会让 dmg 打包失败；
@@ -62,6 +68,10 @@ const config: Configuration = {
   appId: brandedAppId,
   productName: brandedProductName,
   publish: brandedPublish,
+  // 产物文件名：上游写死 "opencode-desktop-${os}-${arch}.${ext}"（brand 层不改 submodule，
+  // 故上游前缀原样带出）。这里覆盖为 brand.json 的 binName，保留上游的 ${os}-${arch}.${ext}
+  // 结构（Linux 下 ${arch} 渲染为 x86_64）。latest*.yml 内引用的产物名同步随之更新。
+  artifactName: brandedArtifactName,
   // 由 appId 派生的 Linux 桌面身份需同步覆盖，否则窗口类 / 启动器与新 appId 不一致。
   extraMetadata: {
     ...base.extraMetadata,

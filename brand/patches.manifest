@@ -201,3 +201,17 @@ packages/desktop/electron.vite.config.ts
 packages/app/src/context/language.tsx
 packages/app/src/desktop-menu.ts
 packages/app/src/env.d.ts
+
+# 模型身份品牌覆盖（被问「你是什么」时回答品牌名而非 opencode）：
+#   - 问题根源：各 provider 系统提示词（session/prompt/*.txt）里写死 "You are opencode"，
+#     11-rebrand 的 i18n 运行时替换只覆盖 UI 文案，够不到发给 LLM 的系统提示词。
+#   - session/system.ts：在 environment() 返回数组最前追加一句身份声明。系统提示词组装顺序为
+#     provider 提示词（"You are opencode"）→ environment → user.system（见 session/llm/request.ts），
+#     故身份声明排在其后、用覆盖式措辞压过它；一处覆盖全部 provider，不改任何 txt，随上游升级零冲突。
+#   - 品牌名来源：内核 sidecar 是独立进程，读不到主进程 import.meta.env，故经运行时 env 传递——
+#     desktop server.ts createSidecarEnv() 把 11-rebrand 注入主进程的 PRODUCT_NAME（来自 brand.json）
+#     写进 sidecar env；system.ts 读 process.env.PRODUCT_NAME，缺省回退 "Dokng"。
+#   - 依赖 03（createSidecarEnv 定义）与 11（主进程 PRODUCT_NAME 注入），按 NN 序最后应用。
+[12-identity]
+packages/desktop/src/main/server.ts
+packages/opencode/src/session/system.ts
