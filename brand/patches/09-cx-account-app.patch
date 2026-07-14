@@ -1,9 +1,9 @@
 diff --git a/packages/app/src/components/cx-account/cx-account-api.ts b/packages/app/src/components/cx-account/cx-account-api.ts
 new file mode 100644
-index 000000000..4689ed89c
+index 000000000..afeb9fe9a
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-account-api.ts
-@@ -0,0 +1,555 @@
+@@ -0,0 +1,634 @@
 +// [cx] 账户面板数据层（迁自 desktop 包 renderer/balance/balance-panel.tsx，US-005 → US-013）。
 +//
 +// 纯数据层：零 UI import（不 import solid-js / 上游组件），可离线 typecheck。承载：
@@ -559,12 +559,91 @@ index 000000000..4689ed89c
 +export function importEffectiveBaseURL(request: ImportRequest): string {
 +  return request.baseURL || cxEnv().NEWAPI_BASE_URL
 +}
++
++// ============================================================================
++// [cx] profile 快照缓存（stale-while-revalidate）
++//
++// 目的：账户面板每次打开都要逐 key 请求 /api/app/profile，网络慢时用户先看到「加载中…」空态
++// 好几秒。此处把上次成功拉到的 ready profile 落 localStorage，下次打开面板时先用缓存瞬时填充
++// 卡片（陈旧但可读），后台再拉最新数据覆盖——即 stale-while-revalidate，消除「点开先白屏」。
++//
++// 边界：
++//   · 只缓存 ready 态——loading/error 无展示价值，不写入也不读出。
++//   · 按 key.id 存，随 key 删除清理（pruneCachedProfiles）。
++//   · 缓存内只有 profile 展示字段，不含 key/baseURL 明文，符合「明文只本地内存持有」约束。
++//   · 带写入时间戳，超过 TTL 视为过期不再用于填充（避免展示过时太久的数据；仍会后台刷新）。
++//   · localStorage 不可用（web SSR / 隐私模式 / 写满）时全部降级为 no-op，绝不抛出。
++// ============================================================================
++
++const PROFILE_CACHE_KEY = "cx-account:profile-cache:v1"
++const PROFILE_CACHE_TTL_MS = 24 * 60 * 60 * 1000 // 24h：超过则不再用于瞬时填充（仍后台刷新）
++
++type ReadyProfile = Extract<KeyProfileState, { status: "ready" }>
++type CachedProfileEntry = { savedAt: number; profile: ReadyProfile }
++
++function readProfileCacheFile(): Record<string, CachedProfileEntry> {
++  try {
++    if (typeof localStorage === "undefined") return {}
++    const raw = localStorage.getItem(PROFILE_CACHE_KEY)
++    if (!raw) return {}
++    const parsed = JSON.parse(raw) as unknown
++    if (!parsed || typeof parsed !== "object") return {}
++    return parsed as Record<string, CachedProfileEntry>
++  } catch {
++    return {}
++  }
++}
++
++function writeProfileCacheFile(file: Record<string, CachedProfileEntry>): void {
++  try {
++    if (typeof localStorage === "undefined") return
++    localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(file))
++  } catch {
++    // localStorage 写满 / 隐私模式禁用 —— 静默降级，不影响面板。
++  }
++}
++
++// [cx] 读取所有未过期的缓存 profile（供面板打开时瞬时填充）。返回 id → ready 态映射；
++// 空 / 过期 / 脏数据一律跳过，异常返回 {}，绝不抛出。
++export function readCachedProfiles(): Record<string, KeyProfileState> {
++  const file = readProfileCacheFile()
++  const now = Date.now()
++  const out: Record<string, KeyProfileState> = {}
++  for (const [id, entry] of Object.entries(file)) {
++    if (!entry || typeof entry.savedAt !== "number") continue
++    if (now - entry.savedAt > PROFILE_CACHE_TTL_MS) continue
++    if (entry.profile && entry.profile.status === "ready") out[id] = entry.profile
++  }
++  return out
++}
++
++// [cx] 写入某 key 的最新 ready profile 到缓存（仅 ready 态；loading/error 忽略）。
++export function saveCachedProfile(id: string, state: KeyProfileState): void {
++  if (state.status !== "ready") return
++  const file = readProfileCacheFile()
++  file[id] = { savedAt: Date.now(), profile: state }
++  writeProfileCacheFile(file)
++}
++
++// [cx] 按存活 key.id 清理缓存（key 删除后丢弃其快照，避免无限增长与展示已删 key 的旧数据）。
++export function pruneCachedProfiles(validIds: string[]): void {
++  const file = readProfileCacheFile()
++  const valid = new Set(validIds)
++  let changed = false
++  for (const id of Object.keys(file)) {
++    if (!valid.has(id)) {
++      delete file[id]
++      changed = true
++    }
++  }
++  if (changed) writeProfileCacheFile(file)
++}
 diff --git a/packages/app/src/components/cx-account/cx-account-dialog.tsx b/packages/app/src/components/cx-account/cx-account-dialog.tsx
 new file mode 100644
-index 000000000..957f91833
+index 000000000..4a1e56b1a
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-account-dialog.tsx
-@@ -0,0 +1,829 @@
+@@ -0,0 +1,850 @@
 +// [cx] 账户面板（迁自 desktop 包 renderer/balance/balance-panel.tsx，US-005 → US-013）。
 +//
 +// 本文件是账户面板从 desktop 包迁入 @opencode-ai/app 包的落地：改用原生 v2 组件
@@ -600,9 +679,12 @@ index 000000000..957f91833
 +  loadChannelState,
 +  maskKey,
 +  openTopup,
++  pruneCachedProfiles,
++  readCachedProfiles,
 +  resolveKeyList,
 +  resolveSiteUrl,
 +  resolveTopupUrl,
++  saveCachedProfile,
 +  usedPercent,
 +  cxChannelApi,
 +  type KeyProfileState,
@@ -786,11 +868,15 @@ index 000000000..957f91833
 +                  <div data-slot="cx-token-stat">
 +                    <span>今日 Tokens</span>
 +                    <strong>{formatTokenCount(ready.keyTokensUsedToday)}</strong>
-+                    <Show when={ready.keyPromptTokensToday !== null || ready.keyCompletionTokensToday !== null}>
-+                      <small data-slot="cx-token-io">
-+                        ↑{formatTokenCount(ready.keyPromptTokensToday)} ↓{formatTokenCount(ready.keyCompletionTokensToday)}
-+                      </small>
-+                    </Show>
++                  </div>
++                  {/* [cx] 输入/输出拆成独立列：原先 ↑↓ 堆在「今日 Tokens」合计下方（该格三行、其余
++                      两行），行高被压导致挤压。独立成格后每格统一两行（标题+值），高度一致不再挤。
++                      恒渲染（无值显示 ↑— ↓—）以保持 5 格固定网格，避免有无数据时列边界跳动。 */}
++                  <div data-slot="cx-token-stat" data-variant="io">
++                    <span>输入 / 输出</span>
++                    <span data-slot="cx-token-io">
++                      ↑{formatTokenCount(ready.keyPromptTokensToday)} ↓{formatTokenCount(ready.keyCompletionTokensToday)}
++                    </span>
 +                  </div>
 +                  <div data-slot="cx-token-stat">
 +                    <span>今日费用</span>
@@ -1019,6 +1105,8 @@ index 000000000..957f91833
 +    const result = await fetchProfileWith(entry.baseURL, entry.key)
 +    if (requestVersions.get(entry.id) !== version || !keys().some((item) => item.id === entry.id)) return
 +    setProfiles((prev) => ({ ...prev, [entry.id]: result }))
++    // [cx] 成功拉到就落缓存，供下次打开面板瞬时填充（stale-while-revalidate）；error/loading 不写。
++    saveCachedProfile(entry.id, result)
 +    setRefreshingIds((prev) => {
 +      const next = new Set(prev)
 +      next.delete(entry.id)
@@ -1030,23 +1118,35 @@ index 000000000..957f91833
 +    for (const entry of keys()) void loadProfile(entry, { preserve: true })
 +  }
 +
-+  async function reloadKeys(options: { loadMissing?: boolean } = {}): Promise<ResolvedKey[]> {
++  async function reloadKeys(
++    options: { loadMissing?: boolean; preserveCached?: boolean } = {},
++  ): Promise<ResolvedKey[]> {
 +    const state = await loadChannelState()
 +    const next = resolveKeyList(state)
 +    const valid = new Set(next.map((entry) => entry.id))
 +    setKeys(next)
 +    setProfiles((prev) => Object.fromEntries(Object.entries(prev).filter(([id]) => valid.has(id))))
++    // [cx] 同步清理已删 key 的缓存快照，避免缓存无限增长 / 下次误填已删 key 的旧数据。
++    pruneCachedProfiles(next.map((entry) => entry.id))
 +    setInitializing(false)
 +    if (options.loadMissing) {
 +      for (const entry of next) {
-+        if (!profiles()[entry.id]) void loadProfile(entry)
++        // preserveCached：缓存已把该 key 填成 ready（陈旧），此处仍要后台刷新，但用 preserve 语义
++        // 保住已填的卡片、不闪回「加载中…」；只有真正缺数据的 key 才走普通 loading 态加载。
++        if (options.preserveCached) void loadProfile(entry, { preserve: true })
++        else if (!profiles()[entry.id]) void loadProfile(entry)
 +      }
 +    }
 +    return next
 +  }
 +
 +  onMount(() => {
-+    void reloadKeys({ loadMissing: true })
++    // [cx] stale-while-revalidate：先用上次落盘的缓存瞬时填充卡片（陈旧但可读），消除「点开先白屏
++    // 几秒」；随后 reloadKeys(loadMissing) 后台逐 key 拉最新数据覆盖。loadProfile 带 preserve 语义，
++    // 已有缓存填充时不会先把卡片打回「加载中…」，而是原地静默刷新。
++    const cached = readCachedProfiles()
++    if (Object.keys(cached).length > 0) setProfiles(cached)
++    void reloadKeys({ loadMissing: true, preserveCached: true })
 +  })
 +
 +  // [cx] 新增 key —— 写入本地列表 → 主进程拉模型 + 热重载（provider 出现），不重启进程。
@@ -1575,10 +1675,10 @@ index 000000000..2a4abd208
 +export { CxDialogImport }
 diff --git a/packages/app/src/components/cx-account/cx-account.css b/packages/app/src/components/cx-account/cx-account.css
 new file mode 100644
-index 000000000..849e784e2
+index 000000000..fb65bb8d1
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-account.css
-@@ -0,0 +1,903 @@
+@@ -0,0 +1,911 @@
 +/* [cx] 账户工作台：完全复用 OpenCode v2 语义 token，不引入品牌外配色。 */
 +@import "@opencode-ai/ui/v2/button-v2.css";
 +@import "@opencode-ai/ui/v2/icon-button-v2.css";
@@ -1938,7 +2038,7 @@ index 000000000..849e784e2
 +   只有身份列可伸缩（1fr），其余三列全固定宽度——每个 KeyCard 是独立 grid，
 +   若用 auto 让列宽跟随各行内容（如指标列在 loading/error 行塌缩、操作列编辑态多一个按钮），
 +   行与行的列边界就会错位。故：
-+     · 指标列固定 306px（= 4 格 ×72 + 3 间隙 ×6，与 cx-token-stats 实宽一致）；
++     · 指标列固定 384px（= 5 格 ×72 + 4 间隙 ×6，与 cx-token-stats 实宽一致）；
 +     · 操作列固定 44px（容纳编辑态两个 20px 按钮 + 4px 间隙，非编辑态单按钮靠右）。
 +   右上角删除入口用绝对定位，故右侧留出 padding 让其不压住操作区。 */
 +.cx-account-body [data-slot="cx-key-card"] {
@@ -1946,7 +2046,7 @@ index 000000000..849e784e2
 +  display: grid;
 +  min-width: 0;
 +  min-height: 64px;
-+  grid-template-columns: minmax(140px, 1fr) 306px minmax(160px, 190px) 44px;
++  grid-template-columns: minmax(140px, 1fr) 384px minmax(160px, 190px) 44px;
 +  align-items: center;
 +  gap: 16px;
 +  padding: 10px 34px 10px 12px;
@@ -2033,11 +2133,13 @@ index 000000000..849e784e2
 +  font-size: 11px;
 +}
 +
-+/* [cx] 单行 Key 项内的紧凑指标组：4 个等宽固定列，宽度不随内容伸缩，
-+   避免长数字把某格撑大挤压其他格。固定高度保证有无「输入/输出」副行时行高一致。 */
++/* [cx] 单行 Key 项内的紧凑指标组：5 个等宽固定列，宽度不随内容伸缩，
++   避免长数字把某格撑大挤压其他格。固定高度保证每格行数一致时行高统一。
++   [cx] 「输入/输出」原先堆在「今日 Tokens」合计下方（该格三行、其余两行），行高被压导致
++   挤压；现拆成独立列（第 2 格），每格统一两行（标题 + 值），高度一致不再挤。 */
 +.cx-account-body [data-slot="cx-token-stats"] {
 +  display: grid;
-+  grid-template-columns: repeat(4, 72px);
++  grid-template-columns: repeat(5, 72px);
 +  gap: 6px;
 +  min-height: 40px;
 +  align-items: center;
@@ -2194,12 +2296,16 @@ index 000000000..849e784e2
 +  color: var(--v2-state-fg-warning, var(--v2-text-text-base));
 +}
 +
-+/* 今日 Tokens 的输入 / 输出拆分副行：muted 小字，附在合计下方。 */
-+.cx-account-body [data-slot="cx-token-io"] {
-+  font-size: 10px;
-+  font-weight: 500;
-+  color: var(--v2-text-text-muted);
++/* [cx] 「输入 / 输出」独立列的值。用 span 承载（非 strong），但需覆盖上面的
++   `cx-token-stat > span`（9px 标题样式）——故选择器带 [data-slot] 提高特异性，
++   还原成与 strong 相近的值样式：略小字号容纳「↑x ↓y」两段，等宽数字、单行裁剪。 */
++.cx-account-body [data-slot="cx-token-stat"] > span[data-slot="cx-token-io"] {
++  overflow: hidden;
++  color: var(--v2-text-text-base);
++  font-size: 11px;
++  font-weight: 560;
 +  font-variant-numeric: tabular-nums;
++  text-overflow: ellipsis;
 +  white-space: nowrap;
 +}
 +
@@ -2332,22 +2438,23 @@ index 000000000..849e784e2
 +}
 +
 +/* [cx] 卡片响应式按 key 列表「实宽」（@container）分档，不按 viewport：
-+     · 四列横排最小宽 = 140 + 306 + 160 + 44 + 3×16(gap) = 698px；
-+     · 收紧档最小宽 = 130 + 306 + 140 + 44 + 3×10(gap) = 650px。
-+   故容器 ≤700px 进收紧档、≤649px 堆叠（见下方 @container 块），
-+   区间连续无重叠，任何列宽下都不会横向溢出。 */
-+@container cx-keys (max-width: 700px) {
++     · 四列横排最小宽 = 140 + 384 + 160 + 44 + 3×16(gap) = 776px；
++     · 收紧档最小宽 = 130 + 384 + 140 + 44 + 3×10(gap) = 728px。
++   故容器 ≤778px 进收紧档、≤727px 堆叠（见下方 @container 块），
++   区间连续无重叠，任何列宽下都不会横向溢出。
++   （指标列 384px = 5 格 ×72 + 4 间隙 ×6，含拆出的「输入/输出」列。） */
++@container cx-keys (max-width: 778px) {
 +  /* 收紧档：仍是四列横排，只收窄列间距与额度列，指标/操作列固定不变，行间边界对齐。 */
 +  .cx-account-body [data-slot="cx-key-card"] {
-+    grid-template-columns: minmax(130px, 1fr) 306px minmax(140px, 170px) 44px;
++    grid-template-columns: minmax(130px, 1fr) 384px minmax(140px, 170px) 44px;
 +    gap: 10px;
 +  }
 +}
 +
-+/* 堆叠档：key 列实宽 < 650px（收紧档也塞不下）时，改为「身份+操作」一行、
-+   指标 / 额度 / 状态各自整行的两列堆叠布局，彻底不再横排，避免 306px 指标列溢出。
-+   区间与收紧档（≤700px）衔接：650–700 收紧、≤649 堆叠，连续无空档。 */
-+@container cx-keys (max-width: 649px) {
++/* 堆叠档：key 列实宽 < 728px（收紧档也塞不下）时，改为「身份+操作」一行、
++   指标 / 额度 / 状态各自整行的两列堆叠布局，彻底不再横排，避免 384px 指标列溢出。
++   区间与收紧档（≤778px）衔接：728–778 收紧、≤727 堆叠，连续无空档。 */
++@container cx-keys (max-width: 727px) {
 +  .cx-account-body [data-slot="cx-key-card"] {
 +    grid-template-columns: minmax(0, 1fr) 44px;
 +    gap: 8px 12px;
@@ -2379,9 +2486,10 @@ index 000000000..849e784e2
 +  }
 +}
 +
-+/* 更窄档：堆叠后指标组仍是固定 306px（4×72+3×6），当 key 列实宽塞不下整行 306px 时
-+   降到 2 列，避免指标组自身横向溢出。按容器实宽触发，与 viewport 无关。 */
-+@container cx-keys (max-width: 340px) {
++/* 更窄档：堆叠后指标组仍是固定 384px（5×72+4×6），当 key 列实宽塞不下整行 384px 时
++   降到 2 列，避免指标组自身横向溢出。按容器实宽触发，与 viewport 无关。
++   2 列时左列为第 1/3/5 项（nth-child(odd)），清其左边框与左内边距。 */
++@container cx-keys (max-width: 420px) {
 +  .cx-account-body [data-slot="cx-token-stats"] {
 +    grid-template-columns: repeat(2, minmax(0, 1fr));
 +    gap: 8px 0;
@@ -2391,7 +2499,7 @@ index 000000000..849e784e2
 +    width: auto;
 +  }
 +
-+  .cx-account-body [data-slot="cx-token-stat"]:nth-child(3) {
++  .cx-account-body [data-slot="cx-token-stat"]:nth-child(odd) {
 +    padding-left: 0;
 +    border-left: 0;
 +  }
