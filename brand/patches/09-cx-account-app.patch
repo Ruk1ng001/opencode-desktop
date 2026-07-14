@@ -640,10 +640,10 @@ index 000000000..afeb9fe9a
 +}
 diff --git a/packages/app/src/components/cx-account/cx-account-dialog.tsx b/packages/app/src/components/cx-account/cx-account-dialog.tsx
 new file mode 100644
-index 000000000..c1602492a
+index 000000000..0073fb3cf
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-account-dialog.tsx
-@@ -0,0 +1,857 @@
+@@ -0,0 +1,863 @@
 +// [cx] 账户面板（迁自 desktop 包 renderer/balance/balance-panel.tsx，US-005 → US-013）。
 +//
 +// 本文件是账户面板从 desktop 包迁入 @opencode-ai/app 包的落地：改用原生 v2 组件
@@ -711,6 +711,8 @@ index 000000000..c1602492a
 +    return current.status === "ready" ? current : undefined
 +  }
 +  const displayLabel = () => props.entry.label.trim() || readyProfile()?.tokenName.trim() || "未命名 key"
++  // [cx] 分组名跟在 sk**** 身份行末尾（不再单独占一行 meta 徽标）；无分组返回空串。
++  const groupTag = () => readyProfile()?.keyGroup?.trim() || ""
 +
 +  // 徽标（状态/分组/动态倍率/过期）从身份列渲染，不再作为独立网格列，避免撑破卡片列布局。
 +  // 统一收敛为一个数组，JSX 用 <For> 渲染；每项带 data-slot 与可选 data-level。
@@ -720,7 +722,7 @@ index 000000000..c1602492a
 +    const tags: Array<{ slot: string; text: string; level?: string }> = []
 +    const status = keyStatusLabel(p.keyStatus)
 +    if (status) tags.push({ slot: "cx-status-tag", text: status, level: "danger" })
-+    if (p.keyGroup) tags.push({ slot: "cx-group-tag", text: p.keyGroup })
++    // [cx] 分组标签已移到身份行（跟在 sk**** 后，见 groupTag()），此处不再作为 meta 徽标渲染。
 +    if (p.keyDynamicRatio) tags.push({ slot: "cx-dynamic-tag", text: "动态倍率" })
 +    const exp = formatExpiry(p.keyExpiresAt)
 +    if (exp.level !== "ok") tags.push({ slot: "cx-expiry-tag", text: exp.text, level: exp.level })
@@ -808,7 +810,13 @@ index 000000000..c1602492a
 +            fallback={
 +              <>
 +                <div data-slot="cx-key-label">{displayLabel()}</div>
-+                <div data-slot="cx-key-masked">{maskKey(props.entry.key)}</div>
++                {/* [cx] sk**** 与分组标签同一行：分组不再单独占一行，紧跟打码 key 之后。 */}
++                <div data-slot="cx-key-masked-row">
++                  <span data-slot="cx-key-masked">{maskKey(props.entry.key)}</span>
++                  <Show when={groupTag()}>
++                    {(g) => <Tag data-slot="cx-group-tag">{g()}</Tag>}
++                  </Show>
++                </div>
 +              </>
 +            }
 +          >
@@ -864,19 +872,17 @@ index 000000000..c1602492a
 +              ready.keyModelLimitsEnabled ? String(ready.keyModelLimits.length) : props.entry.models.length || "全部"
 +            return (
 +              <>
++                {/* [cx] 输入/输出：独立块（自成一列，排在身份与「今日 Tokens」之间），上下两行、
++                    无「输入/输出」标题——↑ 输入一行、↓ 输出一行，行高统一不挤压。 */}
++                <div data-slot="cx-token-io-col">
++                  <span>↑{formatTokenCount(ready.keyPromptTokensToday)}</span>
++                  <span>↓{formatTokenCount(ready.keyCompletionTokensToday)}</span>
++                </div>
++                {/* [cx] 指标 4 格一组（今日 Tokens / 今日费用 / 累计费用 / 模型），宽度随内容变化不再等宽。 */}
 +                <div data-slot="cx-token-stats">
 +                  <div data-slot="cx-token-stat">
 +                    <span>今日 Tokens</span>
 +                    <strong>{formatTokenCount(ready.keyTokensUsedToday)}</strong>
-+                  </div>
-+                  {/* [cx] 输入/输出拆成独立列：原先 ↑↓ 堆在「今日 Tokens」合计下方（该格三行、其余
-+                      两行），行高被压导致挤压。独立成格后每格统一两行（标题+值），高度一致不再挤。
-+                      恒渲染（无值显示 ↑— ↓—）以保持 5 格固定网格，避免有无数据时列边界跳动。 */}
-+                  <div data-slot="cx-token-stat" data-variant="io">
-+                    <span>输入 / 输出</span>
-+                    <span data-slot="cx-token-io">
-+                      ↑{formatTokenCount(ready.keyPromptTokensToday)} ↓{formatTokenCount(ready.keyCompletionTokensToday)}
-+                    </span>
 +                  </div>
 +                  <div data-slot="cx-token-stat">
 +                    <span>今日费用</span>
@@ -1375,7 +1381,7 @@ index 000000000..c1602492a
 +                    />
 +                  </TooltipV2>
 +                  <Show when={siteUrl()}>
-+                    <ButtonV2 variant="neutral" size="normal" onClick={() => openTopup(siteUrl())}>
++                    <ButtonV2 variant="neutral" size="normal" onClick={() => openTopup(siteUrl() + "/dashboard")}>
 +                      控制台
 +                      <Icon name="outline-square-arrow" size="small" />
 +                    </ButtonV2>
@@ -1682,10 +1688,10 @@ index 000000000..2a4abd208
 +export { CxDialogImport }
 diff --git a/packages/app/src/components/cx-account/cx-account.css b/packages/app/src/components/cx-account/cx-account.css
 new file mode 100644
-index 000000000..fb65bb8d1
+index 000000000..3b71b9c1e
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-account.css
-@@ -0,0 +1,911 @@
+@@ -0,0 +1,949 @@
 +/* [cx] 账户工作台：完全复用 OpenCode v2 语义 token，不引入品牌外配色。 */
 +@import "@opencode-ai/ui/v2/button-v2.css";
 +@import "@opencode-ai/ui/v2/icon-button-v2.css";
@@ -2041,19 +2047,21 @@ index 000000000..fb65bb8d1
 +  container-name: cx-keys;
 +}
 +
-+/* 桌面宽度下一行完整呈现一个 Key：身份、指标、额度和操作横向排布。
-+   只有身份列可伸缩（1fr），其余三列全固定宽度——每个 KeyCard 是独立 grid，
++/* 桌面宽度下一行完整呈现一个 Key：身份、输入/输出、指标、额度和操作横向排布（5 大块）。
++   只有身份列可伸缩（1fr），其余列全固定宽度——每个 KeyCard 是独立 grid，
 +   若用 auto 让列宽跟随各行内容（如指标列在 loading/error 行塌缩、操作列编辑态多一个按钮），
 +   行与行的列边界就会错位。故：
-+     · 指标列固定 384px（= 5 格 ×72 + 4 间隙 ×6，与 cx-token-stats 实宽一致）；
-+     · 操作列固定 44px（容纳编辑态两个 20px 按钮 + 4px 间隙，非编辑态单按钮靠右）。
++     · 身份列 1fr（最小 140px），承载 label + sk**** 和分组标签同行；
++     · 输入/输出列固定 64px（上下两行 ↑输入 / ↓输出，无标题，↑↓ 前缀自明）；
++     · 指标列固定 236px（今日 Tokens / 今日费用 / 累计费用 / 模型 四格，格宽随内容不等宽）；
++     · 额度列 160–190px；操作列固定 44px（编辑态两个 20px 按钮 + 4px 间隙）。
 +   右上角删除入口用绝对定位，故右侧留出 padding 让其不压住操作区。 */
 +.cx-account-body [data-slot="cx-key-card"] {
 +  position: relative;
 +  display: grid;
 +  min-width: 0;
 +  min-height: 64px;
-+  grid-template-columns: minmax(140px, 1fr) 384px minmax(160px, 190px) 44px;
++  grid-template-columns: minmax(140px, 1fr) 64px 236px minmax(160px, 190px) 44px;
 +  align-items: center;
 +  gap: 16px;
 +  padding: 10px 34px 10px 12px;
@@ -2133,28 +2141,58 @@ index 000000000..fb65bb8d1
 +  white-space: nowrap;
 +}
 +
-+.cx-account-body [data-slot="cx-key-masked"] {
++/* [cx] sk**** 与分组标签同一行：打码 key 与分组徽标横排，分组不再单独占一行。 */
++.cx-account-body [data-slot="cx-key-masked-row"] {
++  display: flex;
++  min-width: 0;
++  align-items: center;
++  gap: 6px;
 +  margin-top: 4px;
++}
++
++.cx-account-body [data-slot="cx-key-masked"] {
++  overflow: hidden;
 +  color: var(--v2-text-text-faint);
 +  font-family: var(--font-mono, monospace);
 +  font-size: 11px;
++  text-overflow: ellipsis;
++  white-space: nowrap;
 +}
 +
-+/* [cx] 单行 Key 项内的紧凑指标组：5 个等宽固定列，宽度不随内容伸缩，
-+   避免长数字把某格撑大挤压其他格。固定高度保证每格行数一致时行高统一。
-+   [cx] 「输入/输出」原先堆在「今日 Tokens」合计下方（该格三行、其余两行），行高被压导致
-+   挤压；现拆成独立列（第 2 格），每格统一两行（标题 + 值），高度一致不再挤。 */
++/* [cx] 输入/输出独立列（卡片第 2 列，64px）：上下两行 ↑输入 / ↓输出，无标题，行高统一。 */
++.cx-account-body [data-slot="cx-token-io-col"] {
++  display: flex;
++  min-width: 0;
++  height: 40px;
++  flex-direction: column;
++  justify-content: center;
++  gap: 2px;
++  color: var(--v2-text-text-base);
++  font-size: 12px;
++  font-variant-numeric: tabular-nums;
++}
++
++.cx-account-body [data-slot="cx-token-io-col"] > span {
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++}
++
++/* [cx] 单行 Key 项内的紧凑指标组：4 格（今日 Tokens / 今日费用 / 累计费用 / 模型）不等宽，
++   列宽随各格内容自适应（auto），短内容不再被强行拉到固定宽度、整组更紧凑。
++   固定高度保证每格两行（标题 + 值）时行高统一。「输入/输出」已拆到独立列（见 cx-key-io），
++   不再占本组格位。 */
 +.cx-account-body [data-slot="cx-token-stats"] {
 +  display: grid;
-+  grid-template-columns: repeat(5, 72px);
++  grid-template-columns: repeat(4, minmax(0, auto));
 +  gap: 6px;
 +  min-height: 40px;
 +  align-items: center;
++  justify-content: start;
 +}
 +
 +.cx-account-body [data-slot="cx-token-stat"] {
 +  display: flex;
-+  width: 72px;
 +  min-width: 0;
 +  height: 40px;
 +  flex-direction: column;
@@ -2223,7 +2261,7 @@ index 000000000..fb65bb8d1
 +
 +.cx-account-body [data-slot="cx-key-state"] {
 +  min-width: 0;
-+  grid-column: 2 / 4;
++  grid-column: 2 / 5;
 +  overflow: hidden;
 +  color: var(--v2-text-text-faint);
 +  font-size: 11px;
@@ -2445,23 +2483,21 @@ index 000000000..fb65bb8d1
 +}
 +
 +/* [cx] 卡片响应式按 key 列表「实宽」（@container）分档，不按 viewport：
-+     · 四列横排最小宽 = 140 + 384 + 160 + 44 + 3×16(gap) = 776px；
-+     · 收紧档最小宽 = 130 + 384 + 140 + 44 + 3×10(gap) = 728px。
-+   故容器 ≤778px 进收紧档、≤727px 堆叠（见下方 @container 块），
-+   区间连续无重叠，任何列宽下都不会横向溢出。
-+   （指标列 384px = 5 格 ×72 + 4 间隙 ×6，含拆出的「输入/输出」列。） */
++     · 5 列横排最小宽 ≈ 140 + 64 + 236 + 160 + 44 + 4×16(gap) = 708px；
++   故容器 ≤778px 进收紧档、≤707px 堆叠（见下方 @container 块），
++   区间连续无重叠，任何列宽下都不会横向溢出。 */
 +@container cx-keys (max-width: 778px) {
-+  /* 收紧档：仍是四列横排，只收窄列间距与额度列，指标/操作列固定不变，行间边界对齐。 */
++  /* 收紧档：仍是 5 列横排，只收窄列间距与额度列，io/指标/操作列不变，行间边界对齐。 */
 +  .cx-account-body [data-slot="cx-key-card"] {
-+    grid-template-columns: minmax(130px, 1fr) 384px minmax(140px, 170px) 44px;
++    grid-template-columns: minmax(120px, 1fr) 60px 220px minmax(130px, 160px) 44px;
 +    gap: 10px;
 +  }
 +}
 +
-+/* 堆叠档：key 列实宽 < 728px（收紧档也塞不下）时，改为「身份+操作」一行、
-+   指标 / 额度 / 状态各自整行的两列堆叠布局，彻底不再横排，避免 384px 指标列溢出。
-+   区间与收紧档（≤778px）衔接：728–778 收紧、≤727 堆叠，连续无空档。 */
-+@container cx-keys (max-width: 727px) {
++/* 堆叠档：key 列实宽 < 708px（收紧档也塞不下）时，改为「身份+操作」一行、
++   io / 指标 / 额度 / 状态各自整行的两列堆叠布局，彻底不再横排，避免指标组溢出。
++   区间与收紧档（≤778px）衔接：708–778 收紧、≤707 堆叠，连续无空档。 */
++@container cx-keys (max-width: 707px) {
 +  .cx-account-body [data-slot="cx-key-card"] {
 +    grid-template-columns: minmax(0, 1fr) 44px;
 +    gap: 8px 12px;
@@ -2472,13 +2508,21 @@ index 000000000..fb65bb8d1
 +    grid-column: 1;
 +  }
 +
-+  .cx-account-body [data-slot="cx-token-stats"] {
++  /* io 列堆叠时并入指标行上方（第 2 行整行），↑↓ 改横向排列省高度。 */
++  .cx-account-body [data-slot="cx-token-io-col"] {
 +    grid-row: 2;
++    grid-column: 1 / -1;
++    flex-direction: row;
++    gap: 12px;
++  }
++
++  .cx-account-body [data-slot="cx-token-stats"] {
++    grid-row: 3;
 +    grid-column: 1 / -1;
 +  }
 +
 +  .cx-account-body [data-slot="cx-key-quota"] {
-+    grid-row: 3;
++    grid-row: 4;
 +    grid-column: 1 / -1;
 +  }
 +

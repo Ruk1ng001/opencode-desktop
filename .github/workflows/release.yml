@@ -213,13 +213,10 @@ jobs:
       - name: 重放 brand 补丁到 opencode/
         shell: bash
         run: |
-          # brand/patches/*.patch 是相对 opencode/ 的 diff，按 NN- 前缀顺序应用。
-          # submodule 锁在上游 tag，定制改动全在补丁层，编译前需重放。
-          shopt -s nullglob
-          for p in brand/patches/*.patch; do
-            echo "应用补丁：$p"
-            git -C opencode apply "../$p"
-          done
+          # 单一来源：调用 scripts/apply-patches.sh（apply 模式 = strict git apply，
+          # 按 NN 序累积落地到 opencode/ 工作区）。补丁重放逻辑只此一份，
+          # auto-upgrade.yml 与本地维护者共用同脚本，避免多处内联漂移。
+          scripts/apply-patches.sh
 
       - name: 安装 Bun
         uses: oven-sh/setup-bun@v2

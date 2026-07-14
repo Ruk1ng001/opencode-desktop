@@ -98,14 +98,12 @@ jobs:
           git -C opencode reset --hard --quiet
           git -C opencode clean -fdq
 
-          # brand/patches/*.patch 相对 opencode/，按 NN- 前缀（glob 排序）依次应用。
-          # 与 release.yml 完全一致的重放方式：任一补丁 apply 失败即非 0 → 步骤失败 → 通知维护者。
+          # 用统一的重放脚本（strict apply）落地补丁——与 release.yml 同一来源，避免逻辑漂移。
+          # 此刻 brand/BASE_SHA 还是旧基线（升级成功后才刷新），脚本会 warn HEAD≠BASE_SHA，
+          # 但不致命：apply 模式只要求 opencode/ 工作区干净 + 补丁精确适用；任一补丁失败即非 0
+          # → 步骤失败 → 通知维护者手动介入。
           echo "按 NN 序重放补丁到 $LATEST："
-          shopt -s nullglob
-          for p in brand/patches/*.patch; do
-            echo "  应用：$p"
-            git -C opencode apply "../$p"
-          done
+          scripts/apply-patches.sh
           echo "全部补丁 apply 成功。"
 
       - name: 安装依赖 + typecheck（app + desktop）
