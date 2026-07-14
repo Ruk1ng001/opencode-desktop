@@ -640,10 +640,10 @@ index 000000000..afeb9fe9a
 +}
 diff --git a/packages/app/src/components/cx-account/cx-account-dialog.tsx b/packages/app/src/components/cx-account/cx-account-dialog.tsx
 new file mode 100644
-index 000000000..4a1e56b1a
+index 000000000..c1602492a
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-account-dialog.tsx
-@@ -0,0 +1,850 @@
+@@ -0,0 +1,857 @@
 +// [cx] 账户面板（迁自 desktop 包 renderer/balance/balance-panel.tsx，US-005 → US-013）。
 +//
 +// 本文件是账户面板从 desktop 包迁入 @opencode-ai/app 包的落地：改用原生 v2 组件
@@ -1104,7 +1104,14 @@ index 000000000..4a1e56b1a
 +    }
 +    const result = await fetchProfileWith(entry.baseURL, entry.key)
 +    if (requestVersions.get(entry.id) !== version || !keys().some((item) => item.id === entry.id)) return
-+    setProfiles((prev) => ({ ...prev, [entry.id]: result }))
++    setProfiles((prev) => {
++      // [cx] stale-while-revalidate 关键：后台刷新（preserve）失败时，别把已展示的 ready（陈旧）
++      // 卡片打成「获取失败」——陈旧数据比红色报错更有用，也才是缓存的意义。仅当没有可保留的 ready
++      // 数据时（首次加载 / 非 preserve）才落 error。ready 结果永远直接覆盖。
++      const existing = prev[entry.id]
++      if (result.status === "error" && options.preserve && existing?.status === "ready") return prev
++      return { ...prev, [entry.id]: result }
++    })
 +    // [cx] 成功拉到就落缓存，供下次打开面板瞬时填充（stale-while-revalidate）；error/loading 不写。
 +    saveCachedProfile(entry.id, result)
 +    setRefreshingIds((prev) => {
