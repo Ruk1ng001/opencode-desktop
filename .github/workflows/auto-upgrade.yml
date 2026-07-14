@@ -1,0 +1,144 @@
+name: auto-upgrade
+
+# 每日自动升级 opencode 上游基线（brand/BASE_TAG + BASE_SHA + submodule gitlink）。
+#
+# 设计（对齐 brand/ 补丁叠加层架构）：
+#   - submodule 永远锁在「干净的上游 tag」，定制全在 brand/patches/*.patch；
+#   - 「升级」= 把基线 tag 推进到上游最新稳定 tag，并验证所有补丁仍能干净重放。
+#
+# 流程（单 job，任一步失败即报错、GitHub 通知维护者手动介入）：
+#   detect   —— fetch submodule tag，筛出最新稳定 tag（vX.Y.Z），与 BASE_TAG 比较；
+#               无新版本 → no-op 成功退出；有降级风险（当前反而更新）→ 不动。
+#   validate —— submodule 干净 checkout 到新 tag → 按 NN 序 strict `git apply` 全部补丁
+#               （与 release.yml 完全一致的重放方式）→ bun install → typecheck(app+desktop)。
+#   commit   —— 全通过 → 恢复 submodule 干净（gitlink 指向干净 tag，不含补丁）→
+#               更新 BASE_TAG/BASE_SHA/gitlink → 提交 → 用 PAT 直推 main。
+#
+# 为什么用 PAT 推送：
+#   GitHub 默认的 GITHUB_TOKEN 推 main 不会触发其它 workflow（防无限循环），
+#   而升级后需要触发 release.yml 自动出包，故用 RELEASE_PAT（repo 权限）推送。
+#
+# 触发：
+#   - schedule：UTC 16:23 = 北京时间次日 00:23（凌晨，错开整点）；
+#   - workflow_dispatch：手动随时触发。
+
+on:
+  schedule:
+    # 北京时间 00:23（UTC+8） → UTC 16:23。避开整点，减少与上游发布高峰重叠。
+    - cron: "23 16 * * *"
+  workflow_dispatch:
+
+# 同时只跑一个升级流水线，避免并发写 main。
+concurrency:
+  group: auto-upgrade
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  upgrade:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout（含 submodule；用 PAT 以便推送能触发 release.yml）
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          # RELEASE_PAT：repo 权限的 PAT。用它 checkout，后续 git push 即带 PAT 凭据，
+          # 推 main 才能触发 release.yml 自动出包（默认 GITHUB_TOKEN 不触发其它 workflow）。
+          token: ${{ secrets.RELEASE_PAT }}
+
+      - name: 检测上游最新稳定 tag
+        id: detect
+        run: |
+          set -euo pipefail
+          CURRENT="$(tr -d '[:space:]' < brand/BASE_TAG)"
+          echo "当前基线 tag：$CURRENT"
+
+          # 拉取 submodule 所有 tag（origin = anomalyco/opencode，已同步上游）。
+          git -C opencode fetch --tags --quiet origin
+
+          # 只认稳定版 tag vX.Y.Z（排除 -rc / pr-*/ beta 等），按语义版本取最大。
+          LATEST="$(git -C opencode tag -l 'v*' \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+            | sort -V | tail -1)"
+          echo "上游最新稳定 tag：${LATEST:-<无>}"
+
+          if [ -z "$LATEST" ]; then
+            echo "未找到任何稳定 tag，异常退出。" >&2
+            exit 1
+          fi
+
+          # 降级保护：只有当 LATEST 严格新于 CURRENT 时才升级。
+          NEWEST="$(printf '%s\n%s\n' "$CURRENT" "$LATEST" | sort -V | tail -1)"
+          if [ "$LATEST" != "$CURRENT" ] && [ "$NEWEST" = "$LATEST" ]; then
+            echo "发现新版本：$CURRENT → $LATEST"
+            echo "need=true" >> "$GITHUB_OUTPUT"
+            echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
+          else
+            echo "已是最新（或当前基线更新），无需升级。"
+            echo "need=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 安装 Bun
+        if: steps.detect.outputs.need == 'true'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: opencode/package.json
+
+      - name: 切到新 tag 并按 NN 序重放补丁（strict apply）
+        if: steps.detect.outputs.need == 'true'
+        env:
+          LATEST: ${{ steps.detect.outputs.latest }}
+        run: |
+          set -euo pipefail
+          # 干净 checkout 到新 tag（detached）；清掉任何残留，确保基线纯净。
+          git -C opencode checkout --quiet "$LATEST"
+          git -C opencode reset --hard --quiet
+          git -C opencode clean -fdq
+
+          # brand/patches/*.patch 相对 opencode/，按 NN- 前缀（glob 排序）依次应用。
+          # 与 release.yml 完全一致的重放方式：任一补丁 apply 失败即非 0 → 步骤失败 → 通知维护者。
+          echo "按 NN 序重放补丁到 $LATEST："
+          shopt -s nullglob
+          for p in brand/patches/*.patch; do
+            echo "  应用：$p"
+            git -C opencode apply "../$p"
+          done
+          echo "全部补丁 apply 成功。"
+
+      - name: 安装依赖 + typecheck（app + desktop）
+        if: steps.detect.outputs.need == 'true'
+        working-directory: opencode
+        run: |
+          set -euo pipefail
+          bun install
+          # 只 typecheck 定制涉及的两个包，快速验证补丁应用后类型仍自洽。
+          bun turbo typecheck --filter=@opencode-ai/app --filter=@opencode-ai/desktop
+
+      - name: 校验通过 → 更新基线、提交并推送 main
+        if: steps.detect.outputs.need == 'true'
+        env:
+          LATEST: ${{ steps.detect.outputs.latest }}
+        run: |
+          set -euo pipefail
+          # 恢复 submodule 干净：撤销临时 apply 的补丁，gitlink 记录的是干净 tag 的 HEAD。
+          git -C opencode reset --hard --quiet
+          git -C opencode clean -fdq
+
+          NEWSHA="$(git -C opencode rev-parse HEAD)"
+          echo "新基线：$LATEST（$NEWSHA）"
+
+          # 更新基线双文件（保留尾换行，与既有格式一致）。
+          printf '%s\n' "$LATEST" > brand/BASE_TAG
+          printf '%s\n' "$NEWSHA" > brand/BASE_SHA
+
+          git add brand/BASE_TAG brand/BASE_SHA opencode
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore(opencode): 自动升级基线到 ${LATEST}（每日自动）"
+
+          # 用 PAT 凭据推 main → 触发 release.yml 自动出包。
+          git push origin HEAD:main
+          echo "已推送 main，release.yml 将自动出包。"
