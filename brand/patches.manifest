@@ -261,3 +261,29 @@ package.json
 [14-splash-brand]
 packages/desktop/src/renderer/index.tsx
 packages/desktop/src/renderer/styles.css
+
+# 账户入口图标（侧边栏 / 标题栏账户按钮换用户头像，而非难以联想到「账户」的芯片图标）：
+#   - 问题：07 补丁的账户入口按钮原借用上游 icon.tsx 的 "providers" 图标（芯片 / 网格造型），
+#     语义上更像「模型供应商」，用户难以联想到「我的账户」。
+#   - 改法（仅给上游共享 icon.tsx 的 icons 表新增一个键，不改任何既有图标、不动其它文件，
+#     零冲突扩展）：新增 "user" 图标（经典用户头像：圆头 + 肩部半圆，stroke=currentColor，
+#     跟随主题与按钮态）。07 补丁的账户按钮 Icon name 由 "providers" 改引 "user"。
+#   - 依赖 07（账户入口按钮）。仅改 packages/ui 的 icon.tsx，按 NN 序在其后应用。
+[15-account-icon]
+packages/ui/src/components/icon.tsx
+
+# 品牌字标（新会话空状态的 "opencode" 矢量字标换成品牌 DOKNG 字形）：
+#   - 问题：新会话空状态（session-new-design-view.tsx）渲染上游 @opencode-ai/ui 的 WordmarkV2
+#     —— "opencode" 六字母的纯 SVG 路径。11-rebrand 的 i18n 运行时替换只覆盖文案，够不到
+#     SVG 路径，故该字标不受品牌名替换影响，仍显示 "opencode"。
+#   - 改法（仅改 app 包既有文件，不碰 @opencode-ai/ui 的 wordmark-v2.tsx，避免影响该共享
+#     组件的其它用处；同 14-splash「只在唯一引用处内联品牌图形」的低冲突范式）：
+#     · session-new-design-view.tsx：内联 WordmarkBrand 组件（DOKNG 像素网格字形，viewBox
+#       1024×200），替换 <WordmarkV2/>；移除不再引用的 WordmarkV2 import。配色融入主题——
+#       去掉源件自带的 #0a0a0a 黑底与近黑渐变字，字改 fill=currentColor 继承外层
+#       text-v2-background-bg-inverse（浅色主题深字 / 深色主题浅字），保留上游 opacity 0.6 +
+#       底部渐变淡出遮罩，维持低调水印质感、与上游字标同款。
+#   - source（品牌字标的可读原始 SVG）留存在父仓库 brand/wordmark/wordmark-svg.txt。
+#   - 独立于其余补丁的文件（仅改 session-new-design-view.tsx），按 NN 序最后应用。
+[16-wordmark-brand]
+packages/app/src/components/session/session-new-design-view.tsx
