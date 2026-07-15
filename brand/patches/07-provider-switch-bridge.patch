@@ -161,16 +161,16 @@ diff --git a/packages/app/src/pages/layout-new.tsx b/packages/app/src/pages/layo
 index 095d1ebd7..b9622a0a0 100644
 --- a/packages/app/src/pages/layout-new.tsx
 +++ b/packages/app/src/pages/layout-new.tsx
-@@ -7,6 +7,8 @@ import { usePlatform } from "@/context/platform"
+@@ -6,6 +6,8 @@ import { Titlebar, type TitlebarUpdate } from "@/components/titlebar"
+ import { usePlatform } from "@/context/platform"
  import { setNavigate } from "@/utils/notification-click"
  import { setV2Toast, ToastRegion } from "@/utils/toast"
- import { useSettingsCommand } from "@/components/settings-dialog"
 +// [cx] 新布局账户面板接线（标题栏账户按钮 + dokng:// 深链 + 首启无 key 引导）。见 07 补丁。
 +import { CxAccountLauncher } from "@/components/cx-account/cx-account-launcher"
- 
+
  export default function NewLayout(props: ParentProps) {
    const platform = usePlatform()
-@@ -35,6 +37,8 @@ export default function NewLayout(props: ParentProps) {
+@@ -33,6 +35,8 @@ export default function NewLayout(props: ParentProps) {
        }}
      >
        <Titlebar update={update} />
