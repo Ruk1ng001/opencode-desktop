@@ -1688,10 +1688,10 @@ index 000000000..2a4abd208
 +export { CxDialogImport }
 diff --git a/packages/app/src/components/cx-account/cx-account.css b/packages/app/src/components/cx-account/cx-account.css
 new file mode 100644
-index 000000000..3b71b9c1e
+index 000000000..f073cd07f
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-account.css
-@@ -0,0 +1,949 @@
+@@ -0,0 +1,956 @@
 +/* [cx] 账户工作台：完全复用 OpenCode v2 语义 token，不引入品牌外配色。 */
 +@import "@opencode-ai/ui/v2/button-v2.css";
 +@import "@opencode-ai/ui/v2/icon-button-v2.css";
@@ -2448,7 +2448,14 @@ index 000000000..3b71b9c1e
 +}
 +
 +.cx-account-body [data-slot="cx-onboard"] [data-slot="cx-add-form"] {
++  /* [cx] 引导态弹窗固定窄（cx-onboard max-width 480px），两列网格会让 key 输入与名称输入
++     挤在一行并重叠——引导语境只填一个 key，强制单列纵向堆叠，清晰且绝不重叠。 */
++  grid-template-columns: 1fr;
 +  padding: 12px 0 0;
++}
++
++.cx-account-body [data-slot="cx-onboard"] [data-slot="cx-add-form"] > * {
++  grid-column: 1;
 +}
 +
 +.cx-account-body [data-slot="cx-import-row"] {

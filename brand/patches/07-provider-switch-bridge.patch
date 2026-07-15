@@ -94,7 +94,7 @@ index 000000000..548de7fb7
 +              variant="ghost-muted"
 +              size="large"
 +              class="shrink-0"
-+              icon={<Icon name="providers" />}
++              icon={<Icon name="user" />}
 +              onClick={openAccount}
 +              aria-label="账户"
 +            />
@@ -243,7 +243,7 @@ index 8762d2f88..e2dc62231 100644
 +          ? () => (
 +              <Tooltip placement={mobile ? "bottom" : "right"} value="账户">
 +                <IconButton
-+                  icon="providers"
++                  icon="user"
 +                  variant="ghost"
 +                  size="large"
 +                  aria-label="账户"
