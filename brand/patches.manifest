@@ -228,3 +228,22 @@ packages/opencode/src/session/system.ts
 #   - 独立于其余补丁的文件（仅改根 package.json），按 NN 序最后应用。
 [13-fix-solidjs-dep]
 package.json
+
+# 品牌开屏动画（启动加载态的 logo 从上游方块换成品牌「轨道笑脸」+ 动效）：
+#   - 问题：上游桌面启动加载态（renderer/index.tsx 的 LoadingSplash）渲染 @opencode-ai/ui 的
+#     方块 <Splash> + Tailwind animate-pulse（纯呼吸）。品牌化后应展示本项目的轨道笑脸标识。
+#   - 改法（仅改 desktop 包既有文件，不碰 @opencode-ai/ui 的 logo.tsx，避免影响该组件其它用处）：
+#     · renderer/index.tsx：LoadingSplash 内联品牌开屏 SVG（viewBox 48×48，青→蓝→紫渐变），
+#       结构分两层——轨道层 <g data-slot="cx-splash-orbit">（环 + 弧 + 节点）匀速旋转，笑脸主体
+#       （眉/眼/嘴）不在该组、保持静止（跟着转会倒置很怪）；整个 svg 带 data-slot="cx-splash"。
+#       同时移除不再引用的 `import { Splash } from "@opencode-ai/ui/logo"`。为流畅去掉了品牌
+#       logo.svg 的重滤镜/光晕/微点，只留旋转所需的环/弧/节点/笑脸。
+#     · styles.css：上游为空文件、被 renderer/index.tsx 顶部 import "./styles.css" 引入、无其它
+#       补丁触碰——动画 keyframes/选择器的理想落点。定义 cx-splash-spin（轨道 8s 匀速旋转，
+#       transform-origin 24px 24px = viewBox 中心）与 cx-splash-breathe（整体 3s 透明度 + 极轻微
+#       缩放呼吸，呼应上游 animate-pulse 的平静感）；prefers-reduced-motion 时停所有动画回落静态。
+#   - 依赖：仅改 desktop 包的 index.tsx（splash 区，与 10 的 loadLocale 区不重叠）与 styles.css；
+#     按 NN 序最后应用。source（品牌 SVG/CSS 的可读原始件）留存在父仓库 brand/splash/。
+[14-splash-brand]
+packages/desktop/src/renderer/index.tsx
+packages/desktop/src/renderer/styles.css
