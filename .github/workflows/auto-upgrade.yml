@@ -137,6 +137,16 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "chore(opencode): 自动升级基线到 ${LATEST}（每日自动）"
 
-          # 用 PAT 凭据推 main → 触发 release.yml 自动出包。
+          # 推 main（保存基线推进）。GITHUB_TOKEN 推送不会触发其它 workflow，
+          # 故用 PAT checkout 后的凭据推送；真正触发出包的是下方推送的 dokng tag。
           git push origin HEAD:main
-          echo "已推送 main，release.yml 将自动出包。"
+          echo "已推送 main。"
+
+          # 计算下一个 dokng 版本 tag（vX.Y.Z-dokng.N，基于新基线 BASE_TAG），打 tag 并推送。
+          # release.yml 触发器是 push tags v*，推这个 tag 才会真正触发自动出包（复用现有版本号规则）。
+          git fetch --tags --quiet origin || true
+          NEWTAG="$(scripts/next-dokng-version.sh)"
+          echo "新 dokng 版本 tag：$NEWTAG"
+          git tag "$NEWTAG"
+          git push origin "$NEWTAG"
+          echo "已推送 tag $NEWTAG，release.yml 将据此自动出包。"
