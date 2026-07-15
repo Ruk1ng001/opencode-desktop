@@ -94,7 +94,7 @@ packages/desktop/src/preload/types.ts
 packages/desktop/src/main/index.ts
 
 # provider 切换桥 + 侧边栏账户入口 + 账户面板接线（多 provider 改造 + 账户面板迁移接线）：
-#   本补丁触碰 @opencode-ai/app 包（薄叠加，跟随上游升级时重放）。三个文件：
+#   本补丁触碰 @opencode-ai/app 包（薄叠加，跟随上游升级时重放）。五个文件：
 #   - directory-layout.tsx：在 LocalProvider 作用域内挂一个极小的桥接组件
 #     CxProviderSwitchBridge。账户面板（CxDialogAccount）经原生 v2 Dialog 弹出、挂在 opencode
 #     组件树之外、够不到 useLocal()，故经 window CustomEvent `cx:select-provider`
@@ -108,6 +108,18 @@ packages/desktop/src/main/index.ts
 #     server.isLocal() guard 之前（导入与本地 server 无关）。
 #   - sidebar-shell.tsx：SidebarContent 新增可选 slot renderAccountButton，渲染在底部设置齿轮
 #     上方；不传则不渲染（web 等平台不显示）。
+#   —— 上游「新布局」(newLayoutDesigns / layout-new.tsx) 适配（新增两个文件）：新布局走
+#      layout-new.tsx（NewLayout），只有 Titlebar + main、没有 SidebarContent，故上面 layout.tsx /
+#      sidebar-shell.tsx 挂的账户按钮 + onMount 里的 dokng:// 深链 / 首启无 key 引导在新布局下全失效。
+#   - cx-account-launcher.tsx（新文件）：把这三件事重新接到新布局。CxAccountLauncher 组件仅 desktop
+#     生效——① 标题栏右侧账户按钮（经 useTitlebarRightMount() 的 #opencode-titlebar-right portal 挂载，
+#     与原生 status popover 同排，new-session.tsx / session-header.tsx 同款范式）；② dokng:// 一键导入
+#     深链（复用 opencode:deep-link 事件 + drainPendingDeepLinks 启动缓冲，逻辑同 layout.tsx 段）；
+#     ③ 首启无 key 引导。逻辑与 layout.tsx 段等价，仅挂载点不同（旧布局侧边栏 slot → 新布局标题栏 portal）。
+#     两套布局运行时二选一（app.tsx），本组件只在 layout-new.tsx 挂载，不与旧布局重复触发。
+#   - layout-new.tsx：在 <Titlebar/> 之后挂一行 <CxAccountLauncher/>（组件内部自判 desktop）。
+#   注：切 key 的 cx:select-provider 桥仍在 directory-layout.tsx（CxProviderSwitchBridge，跨布局通用，
+#      新布局 session 页仍经过 DirectoryDataProvider），无需为新布局重复实现。
 #
 #   多 provider 改造总述（配合 03 的 buildChannelConfigContent 多 provider 注入 + 04 的
 #   channelProviderId）：每个本地 key 被注入成一个独立 opencode provider（providerID =
@@ -118,6 +130,8 @@ packages/desktop/src/main/index.ts
 packages/app/src/pages/directory-layout.tsx
 packages/app/src/pages/layout.tsx
 packages/app/src/pages/layout/sidebar-shell.tsx
+packages/app/src/components/cx-account/cx-account-launcher.tsx
+packages/app/src/pages/layout-new.tsx
 
 #
 # [08-self-update-prerelease] 放行 prerelease，让 cx 自更新能选中 -cx.N 版本。

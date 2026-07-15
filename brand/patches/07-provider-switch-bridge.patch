@@ -1,3 +1,109 @@
+diff --git a/packages/app/src/components/cx-account/cx-account-launcher.tsx b/packages/app/src/components/cx-account/cx-account-launcher.tsx
+new file mode 100644
+index 000000000..548de7fb7
+--- /dev/null
++++ b/packages/app/src/components/cx-account/cx-account-launcher.tsx
+@@ -0,0 +1,100 @@
++// [cx] 新布局(newLayoutDesigns / layout-new.tsx)下的账户面板接线。
++//
++// 背景：上游「新布局」走 layout-new.tsx（NewLayout），只有 Titlebar + main，没有 SidebarContent，
++// 故 07 补丁挂在旧布局(layout.tsx)侧边栏底部的账户按钮 + onMount 里的 dokng:// 深链 / 首启无 key
++// 引导在新布局下全部失效。本组件把这三件事重新接到新布局：
++//   1. 标题栏右侧账户按钮：经 useTitlebarRightMount() 的 #opencode-titlebar-right portal 挂载
++//      （与原生 status popover 同排，new-session.tsx / session-header.tsx 同款范式）。
++//   2. dokng:// 一键导入深链：复用 opencode 既有 deep-link 分发（opencode:deep-link 事件 +
++//      启动缓冲 drainPendingDeepLinks），解析出 dokng:// 后弹导入确认框（CxDialogImport，不静默写入）。
++//   3. 首启无 key 引导：读本地 key 列表为空则自动弹账户面板（CxDialogAccount）。
++//
++// 逻辑与 07 的 layout.tsx 段等价，仅挂载点不同（旧布局侧边栏 slot → 新布局标题栏 portal）。
++// 两套布局运行时二选一（app.tsx），本组件只在 layout-new.tsx 挂载，不与旧布局重复触发。
++// 全部仅 desktop 生效（账户面板依赖 desktop preload 的 window.api）；非 desktop 渲染 null。
++//
++// 依赖：切 key 的 cx:select-provider 桥仍在 07 的 directory-layout.tsx（CxProviderSwitchBridge，
++// 跨布局通用，新布局 session 页仍经过 DirectoryDataProvider），本组件不重复实现。
++
++import { onMount, Show } from "solid-js"
++import { Portal } from "solid-js/web"
++import { makeEventListener } from "@solid-primitives/event-listener"
++import { Icon } from "@opencode-ai/ui/icon"
++import { IconButtonV2 } from "@opencode-ai/ui/v2/icon-button-v2"
++import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
++import { useDialog } from "@opencode-ai/ui/context/dialog"
++import { usePlatform } from "@/context/platform"
++import { useTitlebarRightMount } from "@/components/titlebar"
++import { deepLinkEvent, drainPendingDeepLinks } from "@/pages/layout/deep-links"
++
++export function CxAccountLauncher() {
++  const platform = usePlatform()
++  const dialog = useDialog()
++  const rightMount = useTitlebarRightMount()
++
++  // 非 desktop（web 等）不渲染任何东西：账户面板依赖 desktop preload 的 window.api。
++  if (platform.platform !== "desktop") return null
++
++  const openAccount = () => {
++    void import("@/components/cx-account/cx-account-dialog").then((x) => {
++      dialog.show(() => <x.CxDialogAccount />)
++    })
++  }
++
++  // dokng:// 一键导入深链：解析出第一条有效链接后弹导入确认框（不静默写入，见 cx-account-import）。
++  const handleDeepLinks = (urls: string[]) => {
++    void import("@/components/cx-account/cx-account-api").then((api) => {
++      for (const url of urls) {
++        const req = api.parseImportDeepLink(url)
++        if (!req) continue
++        void import("@/components/cx-account/cx-account-import").then((x) => {
++          dialog.show(() => <x.CxDialogImport request={req} />)
++        })
++        break
++      }
++    })
++  }
++
++  onMount(() => {
++    const handler = (event: Event) => {
++      const detail = (event as CustomEvent<{ urls: string[] }>).detail
++      const urls = detail?.urls ?? []
++      if (urls.length === 0) return
++      handleDeepLinks(urls)
++    }
++
++    handleDeepLinks(drainPendingDeepLinks(window))
++    makeEventListener(window, deepLinkEvent, handler as EventListener)
++
++    // [cx] FR-3.6: 首启无 key 引导。启动时读本地 key 列表，若为空则自动弹账户面板（引导新增流程）。
++    // 仅触发一次（dialog.show 一次性；添加后 keys 非空自然不再触发）。
++    void import("@/components/cx-account/cx-account-api").then(async (api) => {
++      const state = await api.loadChannelState()
++      if (api.resolveKeyList(state).length === 0) {
++        const x = await import("@/components/cx-account/cx-account-dialog")
++        dialog.show(() => <x.CxDialogAccount />)
++      }
++    })
++  })
++
++  // 标题栏右侧账户按钮（#opencode-titlebar-right portal，与原生 status popover 同排）。
++  return (
++    <Show when={rightMount()}>
++      {(mount) => (
++        <Portal mount={mount()}>
++          <TooltipV2 placement="bottom" value="账户">
++            <IconButtonV2
++              type="button"
++              variant="ghost-muted"
++              size="large"
++              class="shrink-0"
++              icon={<Icon name="providers" />}
++              onClick={openAccount}
++              aria-label="账户"
++            />
++          </TooltipV2>
++        </Portal>
++      )}
++    </Show>
++  )
++}
 diff --git a/packages/app/src/pages/directory-layout.tsx b/packages/app/src/pages/directory-layout.tsx
 index 77c120e57..eff51d9cf 100644
 --- a/packages/app/src/pages/directory-layout.tsx
@@ -51,8 +157,30 @@ index 77c120e57..eff51d9cf 100644
  export const ProjectDirString = Schema.String.pipe(Schema.brand("ProjectDirString"))
  export type ProjectDirString = Schema.Schema.Type<typeof ProjectDirString>
  
+diff --git a/packages/app/src/pages/layout-new.tsx b/packages/app/src/pages/layout-new.tsx
+index 095d1ebd7..b9622a0a0 100644
+--- a/packages/app/src/pages/layout-new.tsx
++++ b/packages/app/src/pages/layout-new.tsx
+@@ -7,6 +7,8 @@ import { usePlatform } from "@/context/platform"
+ import { setNavigate } from "@/utils/notification-click"
+ import { setV2Toast, ToastRegion } from "@/utils/toast"
+ import { useSettingsCommand } from "@/components/settings-dialog"
++// [cx] 新布局账户面板接线（标题栏账户按钮 + dokng:// 深链 + 首启无 key 引导）。见 07 补丁。
++import { CxAccountLauncher } from "@/components/cx-account/cx-account-launcher"
+ 
+ export default function NewLayout(props: ParentProps) {
+   const platform = usePlatform()
+@@ -35,6 +37,8 @@ export default function NewLayout(props: ParentProps) {
+       }}
+     >
+       <Titlebar update={update} />
++      {/* [cx] 账户入口 + dokng:// 深链 + 首启引导（组件内部自判 desktop，非 desktop 渲染 null）。 */}
++      <CxAccountLauncher />
+       <main class="flex-1 min-h-0 min-w-0 overflow-x-hidden flex flex-col items-start contain-strict">
+         <Suspense>{props.children}</Suspense>
+       </main>
 diff --git a/packages/app/src/pages/layout.tsx b/packages/app/src/pages/layout.tsx
-index fd9d16b90..85ab965f9 100644
+index 8762d2f88..e2dc62231 100644
 --- a/packages/app/src/pages/layout.tsx
 +++ b/packages/app/src/pages/layout.tsx
 @@ -1256,6 +1256,22 @@ export default function LegacyLayout(props: ParentProps) {
