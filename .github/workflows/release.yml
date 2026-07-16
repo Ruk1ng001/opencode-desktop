@@ -232,11 +232,22 @@ jobs:
         shell: bash
         run: |
           # Windows 上用 hoisted linker（对齐上游 setup-bun action 的 workaround）。
+          install_flags=""
           if [ "$RUNNER_OS" = "Windows" ]; then
-            bun install --linker hoisted
-          else
-            bun install
+            install_flags="--linker hoisted"
           fi
+          # [dokng] bun install 加重试：npm registry 偶发单包 tarball 下载失败（CI 曾遇
+          # @esbuild/darwin-x64 这类平台可选依赖抽风），一次失败即中断整个发布。重试 3 次、
+          # 间隔递增（15s/30s）消除瞬时网络抖动；三次仍失败才真正报错。
+          for attempt in 1 2 3; do
+            bun install $install_flags && break
+            if [ "$attempt" = 3 ]; then
+              echo "bun install 连续 3 次失败，放弃。" >&2
+              exit 1
+            fi
+            echo "bun install 第 $attempt 次失败，$((attempt * 15))s 后重试…" >&2
+            sleep $((attempt * 15))
+          done
 
       - name: 注入 dokng 版本号到 package.json
         working-directory: opencode/packages/desktop
