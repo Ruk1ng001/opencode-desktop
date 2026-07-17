@@ -218,6 +218,15 @@ jobs:
           # auto-upgrade.yml 与本地维护者共用同脚本，避免多处内联漂移。
           scripts/apply-patches.sh
 
+      - name: 重放画布补丁到 infinite-canvas/
+        shell: bash
+        run: |
+          # [dokng] 画布（第二上游）补丁重放：给 infinite-canvas/ 工作区落地 basename /
+          # postMessage 注入 / persist 不落盘（brand/canvas-patches/）。desktop 构建时 prebuild
+          # 的 build-canvas.ts 会以 VITE_BASE=/canvas/ 构建画布、拷进 out/renderer/canvas/；
+          # 若此步不跑，正式包内嵌的画布是未打补丁版（iframe 404 + 收不到宿主 key）。
+          scripts/apply-canvas-patches.sh
+
       - name: 安装 Bun
         uses: oven-sh/setup-bun@v2
         with:

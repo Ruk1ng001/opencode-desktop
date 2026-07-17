@@ -1,3 +1,6 @@
 [submodule "opencode"]
 	path = opencode
 	url = https://github.com/anomalyco/opencode.git
+[submodule "infinite-canvas"]
+	path = infinite-canvas
+	url = https://github.com/basketikun/infinite-canvas.git
