@@ -21,7 +21,7 @@ index 5592e2f4e..6756390ba 100644
    )
  }
 diff --git a/packages/app/src/components/cx-account/cx-account-dialog.tsx b/packages/app/src/components/cx-account/cx-account-dialog.tsx
-index 0073fb3cf..1c182ecca 100644
+index 0073fb3cf..7575340a0 100644
 --- a/packages/app/src/components/cx-account/cx-account-dialog.tsx
 +++ b/packages/app/src/components/cx-account/cx-account-dialog.tsx
 @@ -44,6 +44,8 @@ import {
@@ -45,40 +45,42 @@ index 0073fb3cf..1c182ecca 100644
  }) {
    const state = () => props.state ?? ({ status: "loading" } as KeyProfileState)
    const [editing, setEditing] = createSignal(false)
-@@ -274,6 +281,32 @@ function KeyCard(props: {
+@@ -274,6 +281,34 @@ function KeyCard(props: {
          </Match>
        </Switch>
  
 +      {/* [dokng] 画布双槽位入口（待办 4）：① 启动作图 → 作图槽，② 启动作图对话 → 对话槽。
-+          点击写对应槽位（再点同一 key 取消）；选中态高亮。仅可管理 key（有凭据、非 builtin）显示。
++          做成右上角小图标按钮（与删除按钮同排、同 IconButtonV2 small 风格），绝对定位、
++          不占 grid 主体列——避免把编辑按钮挤到下一行、避免与卡片其它字体尺寸不一致。
++          选中态 variant="contrast" 高亮 + tooltip 说明。仅可管理 key 显示。
 +          stopPropagation 阻止冒泡到卡片整行的切换激活。 */}
-+      <Show when={manageable()}>
-+        <div data-slot="cx-canvas-actions" onClick={(e) => e.stopPropagation()}>
-+          <ButtonV2
-+            variant={props.isImageSlot ? "contrast" : "neutral"}
-+            size="small"
-+            icon="grid-plus"
-+            onClick={() => props.onToggleImageSlot(props.entry.id)}
-+            aria-label={props.isImageSlot ? "取消作图渠道" : "以此 key 启动作图"}
-+          >
-+            {props.isImageSlot ? "作图中" : "启动作图"}
-+          </ButtonV2>
-+          <ButtonV2
-+            variant={props.isChatSlot ? "contrast" : "neutral"}
-+            size="small"
-+            icon="review"
-+            onClick={() => props.onToggleChatSlot(props.entry.id)}
-+            aria-label={props.isChatSlot ? "取消作图对话渠道" : "以此 key 启动作图对话"}
-+          >
-+            {props.isChatSlot ? "对话中" : "启动作图对话"}
-+          </ButtonV2>
++      <Show when={manageable() && !editing() && !confirmingDelete()}>
++        <div data-slot="cx-canvas-corner" onClick={(e) => e.stopPropagation()}>
++          <TooltipV2 value={props.isImageSlot ? "取消作图渠道" : "以此 key 启动作图"} placement="top">
++            <IconButtonV2
++              aria-label={props.isImageSlot ? "取消作图渠道" : "以此 key 启动作图"}
++              variant={props.isImageSlot ? "contrast" : "neutral"}
++              size="small"
++              onClick={() => props.onToggleImageSlot(props.entry.id)}
++              icon={<Icon name="grid-plus" size="small" />}
++            />
++          </TooltipV2>
++          <TooltipV2 value={props.isChatSlot ? "取消作图对话渠道" : "以此 key 启动作图对话"} placement="top">
++            <IconButtonV2
++              aria-label={props.isChatSlot ? "取消作图对话渠道" : "以此 key 启动作图对话"}
++              variant={props.isChatSlot ? "contrast" : "neutral"}
++              size="small"
++              onClick={() => props.onToggleChatSlot(props.entry.id)}
++              icon={<Icon name="review" size="small" />}
++            />
++          </TooltipV2>
 +        </div>
 +      </Show>
 +
        {/* [cx] US-009: 编辑操作固定在行末列。删除入口已移到卡片右上角（见 header 上方）。
            编辑态时行末显示保存 / 取消；非编辑态只显示编辑名称按钮。 */}
        <Show when={manageable()}>
-@@ -849,6 +882,10 @@ export function CxDialogAccount() {
+@@ -849,6 +884,10 @@ export function CxDialogAccount() {
                          onActivate={(e) => void handleActivate(e)}
                          onSaveLabel={(id, label) => void handleSaveLabel(id, label)}
                          onRemove={(id) => void handleRemove(id)}
@@ -90,7 +92,7 @@ index 0073fb3cf..1c182ecca 100644
                      )}
                    </For>
 diff --git a/packages/app/src/components/cx-account/cx-account-launcher.tsx b/packages/app/src/components/cx-account/cx-account-launcher.tsx
-index 2c55b052a..d5d187f92 100644
+index 2c55b052a..3b6725e52 100644
 --- a/packages/app/src/components/cx-account/cx-account-launcher.tsx
 +++ b/packages/app/src/components/cx-account/cx-account-launcher.tsx
 @@ -18,6 +18,7 @@
@@ -109,7 +111,7 @@ index 2c55b052a..d5d187f92 100644
    const rightMount = useTitlebarRightMount()
  
    // 非 desktop（web 等）不渲染任何东西：账户面板依赖 desktop preload 的 window.api。
-@@ -77,11 +79,22 @@ export function CxAccountLauncher() {
+@@ -77,22 +79,37 @@ export function CxAccountLauncher() {
      })
    })
  
@@ -119,35 +121,73 @@ index 2c55b052a..d5d187f92 100644
      <Show when={rightMount()}>
        {(mount) => (
          <Portal mount={mount()}>
-+          <TooltipV2 placement="bottom" value="画布">
-+            <IconButtonV2
-+              type="button"
-+              variant="ghost-muted"
-+              size="large"
-+              class="shrink-0"
-+              icon={<Icon name="dot-grid" />}
-+              onClick={() => navigate("/canvas")}
-+              aria-label="画布"
-+            />
-+          </TooltipV2>
-           <TooltipV2 placement="bottom" value="账户">
-             <IconButtonV2
-               type="button"
+-          <TooltipV2 placement="bottom" value="账户">
+-            <IconButtonV2
+-              type="button"
+-              variant="ghost-muted"
+-              size="large"
+-              class="shrink-0"
+-              icon={<Icon name="user" />}
+-              onClick={openAccount}
+-              aria-label="账户"
+-            />
+-          </TooltipV2>
++          {/* 显式横向容器：不依赖 Portal 父级或 TooltipV2 trigger 的默认排布（真机曾上下堆叠）。
++              左画布、右账户，同排。 */}
++          <div class="flex items-center gap-1 shrink-0">
++            <TooltipV2 placement="bottom" value="画布">
++              <IconButtonV2
++                type="button"
++                variant="ghost-muted"
++                size="large"
++                class="shrink-0"
++                icon={<Icon name="dot-grid" />}
++                onClick={() => navigate("/canvas")}
++                aria-label="画布"
++              />
++            </TooltipV2>
++            <TooltipV2 placement="bottom" value="账户">
++              <IconButtonV2
++                type="button"
++                variant="ghost-muted"
++                size="large"
++                class="shrink-0"
++                icon={<Icon name="user" />}
++                onClick={openAccount}
++                aria-label="账户"
++              />
++            </TooltipV2>
++          </div>
+         </Portal>
+       )}
+     </Show>
 diff --git a/packages/app/src/components/cx-account/cx-account.css b/packages/app/src/components/cx-account/cx-account.css
-index f073cd07f..202c89e68 100644
+index f073cd07f..d4fb0bcc2 100644
 --- a/packages/app/src/components/cx-account/cx-account.css
 +++ b/packages/app/src/components/cx-account/cx-account.css
-@@ -432,6 +432,15 @@
+@@ -432,6 +432,27 @@
    gap: 8px;
  }
  
 +/* [dokng] 画布双槽位按钮行（启动作图 / 启动作图对话）：横排、可换行，与操作区同排风格。 */
-+.cx-account-body [data-slot="cx-canvas-actions"] {
++/* [dokng] 画布双槽位入口：绝对定位到卡片右上角、删除按钮（right:6px）左侧，脱离 5 列
++   grid 主体流，不再占列、不再把编辑按钮挤到下一行。与删除/编辑同为 IconButtonV2 small，
++   视觉统一。常态半透明，hover / 选中态转实；已选槽位由按钮自身 variant="contrast" 高亮。 */
++.cx-account-body [data-slot="cx-canvas-corner"] {
++  position: absolute;
++  top: 6px;
++  right: 44px;
++  z-index: 1;
 +  display: flex;
-+  min-width: 0;
-+  flex-wrap: wrap;
-+  align-items: center;
-+  gap: 6px;
++  gap: 4px;
++  opacity: 0.72;
++  transition: opacity 120ms ease;
++}
++
++.cx-account-body [data-slot="cx-key-card"]:hover [data-slot="cx-canvas-corner"],
++.cx-account-body [data-slot="cx-key-card"]:focus-within [data-slot="cx-canvas-corner"],
++.cx-account-body [data-slot="cx-key-card"][data-active] [data-slot="cx-canvas-corner"] {
++  opacity: 1;
 +}
 +
  .cx-account-body [data-slot="cx-key-card-title"] {
@@ -315,7 +355,7 @@ index 000000000..b1389e19a
 +}
 diff --git a/packages/app/src/pages/canvas-embed.tsx b/packages/app/src/pages/canvas-embed.tsx
 new file mode 100644
-index 000000000..9ccf4760d
+index 000000000..51fa06445
 --- /dev/null
 +++ b/packages/app/src/pages/canvas-embed.tsx
 @@ -0,0 +1,95 @@
@@ -397,7 +437,7 @@ index 000000000..9ccf4760d
 +  })
 +
 +  return (
-+    <div class="flex-1 min-h-0 min-w-0 flex flex-col">
++    <div class="flex-1 min-h-0 min-w-0 w-full h-full self-stretch flex flex-col">
 +      <Show when={keys().length === 0}>
 +        <div data-slot="canvas-no-key" class="px-4 py-2 text-v2-text-muted text-sm">
 +          还没在账户面板选择作图 / 对话渠道，画布将使用其自身默认配置。
