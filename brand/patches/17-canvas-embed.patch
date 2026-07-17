@@ -355,10 +355,10 @@ index 000000000..b1389e19a
 +}
 diff --git a/packages/app/src/pages/canvas-embed.tsx b/packages/app/src/pages/canvas-embed.tsx
 new file mode 100644
-index 000000000..51fa06445
+index 000000000..030a7c0bf
 --- /dev/null
 +++ b/packages/app/src/pages/canvas-embed.tsx
-@@ -0,0 +1,95 @@
+@@ -0,0 +1,141 @@
 +// [dokng] 画布内嵌页（待办 4）。
 +//
 +// infinite-canvas（React 19 SPA）与宿主（SolidJS）框架异构，不能当组件嵌，只能 <iframe> 隔离。
@@ -375,6 +375,10 @@ index 000000000..51fa06445
 +// 全部仅 desktop 生效（key 来自 desktop preload 的 window.api）；非 desktop 渲染占位提示。
 +
 +import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js"
++import { useNavigate } from "@solidjs/router"
++import { Icon } from "@opencode-ai/ui/icon"
++import { IconButtonV2 } from "@opencode-ai/ui/v2/icon-button-v2"
++import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
 +import { usePlatform } from "@/context/platform"
 +import { loadChannelState, resolveKeyList, type ResolvedKey } from "@/components/cx-account/cx-account-api"
 +import { buildCanvasPayload, canvasChatKeyId, canvasImageKeyId } from "@/components/cx-account/cx-canvas-slots"
@@ -386,12 +390,29 @@ index 000000000..51fa06445
 +
 +export default function CanvasEmbed() {
 +  const platform = usePlatform()
++  const navigate = useNavigate()
++
++  // 返回：/canvas 是顶层路由、不套布局外壳（无侧边栏/标题栏导航），全屏 iframe 占满窗口。
++  // 必须自带返回入口，否则进画布后无从退出。优先浏览器历史回退（保留来源上下文），
++  // 无历史时兜底回根路由。
++  const goBack = () => {
++    if (window.history.length > 1) navigate(-1)
++    else navigate("/")
++  }
 +
 +  // 非 desktop：画布依赖 desktop 侧渠道 key，直接提示。
 +  if (platform.platform !== "desktop") {
 +    return (
-+      <div class="flex-1 min-h-0 min-w-0 flex items-center justify-center text-v2-text-muted">
-+        画布仅在桌面客户端可用。
++      <div class="flex-1 min-h-0 min-w-0 flex flex-col items-center justify-center gap-3 text-v2-text-text-muted">
++        <span>画布仅在桌面客户端可用。</span>
++        <IconButtonV2
++          type="button"
++          variant="neutral"
++          size="small"
++          icon={<Icon name="arrow-left" size="small" />}
++          onClick={goBack}
++          aria-label="返回"
++        />
 +      </div>
 +    )
 +  }
@@ -436,13 +457,38 @@ index 000000000..51fa06445
 +    post()
 +  })
 +
++  const isMac = platform.os === "macos"
++
 +  return (
-+    <div class="flex-1 min-h-0 min-w-0 w-full h-full self-stretch flex flex-col">
-+      <Show when={keys().length === 0}>
-+        <div data-slot="canvas-no-key" class="px-4 py-2 text-v2-text-muted text-sm">
-+          还没在账户面板选择作图 / 对话渠道，画布将使用其自身默认配置。
-+        </div>
-+      </Show>
++    <div class="relative flex-1 min-h-0 min-w-0 w-full h-full self-stretch flex flex-col">
++      {/* 顶部精简栏：/canvas 是顶层路由、不套 app 布局外壳（无侧边栏/标题栏），此处补一条——
++          ① 窗口拖拽区（[app-region:drag]：Electron 无边框窗口靠 CSS app-region 拖窗，
++             此 fork 里 Tauri 的 startDragging 无效）；
++          ② 容纳返回入口（进得去也出得来）；
++          ③ macOS 左侧留出红绿灯宽度（84px），避免返回按钮压住原生红绿灯。
++          返回按钮与提示标 [app-region:no-drag]，保证可点击不被拖拽区吞掉事件。 */}
++      <div
++        class="shrink-0 flex items-center gap-2 h-9 px-2 bg-v2-background-bg-deep border-b border-v2-border-border-muted [app-region:drag]"
++        style={{ "padding-left": isMac ? "84px" : undefined }}
++      >
++        <TooltipV2 placement="bottom" value="返回">
++          <IconButtonV2
++            type="button"
++            variant="ghost-muted"
++            size="small"
++            class="[app-region:no-drag]"
++            icon={<Icon name="arrow-left" size="small" />}
++            onClick={goBack}
++            aria-label="返回"
++          />
++        </TooltipV2>
++        <span class="select-none text-v2-text-text-muted text-sm">画布</span>
++        <Show when={keys().length === 0}>
++          <span class="ml-auto truncate pr-1 text-v2-text-text-faint text-xs [app-region:no-drag]">
++            未选择渠道，使用画布默认配置
++          </span>
++        </Show>
++      </div>
 +      <iframe
 +        ref={iframeRef}
 +        src={CANVAS_SRC}
