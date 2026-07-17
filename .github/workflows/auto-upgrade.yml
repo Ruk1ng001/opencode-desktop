@@ -156,7 +156,11 @@ jobs:
           # 计算下一个 dokng 版本 tag（vX.Y.Z-dokng.N，基于新基线 BASE_TAG），打 tag 并推送。
           # release.yml 触发器是 push tags v*，推这个 tag 才会真正触发自动出包（复用现有版本号规则）。
           git fetch --tags --quiet origin || true
-          NEWTAG="$(scripts/next-dokng-version.sh)"
+          # next-dokng-version.sh 会把 base=/n=/version=/tag= 四行都打到 stdout（供
+          # GITHUB_OUTPUT 用）。这里用 $() 抓 stdout，必须只抽 tag= 那一行的值，
+          # 否则 NEWTAG 变成多行字符串，git tag 报 "not a valid tag name"。
+          NEWTAG="$(scripts/next-dokng-version.sh | sed -n 's/^tag=//p')"
+          [ -n "$NEWTAG" ] || { echo "计算 dokng tag 失败（输出为空）。" >&2; exit 1; }
           echo "新 dokng 版本 tag：$NEWTAG"
           git tag "$NEWTAG"
           git push origin "$NEWTAG"
