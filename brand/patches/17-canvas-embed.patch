@@ -257,10 +257,10 @@ index f073cd07f..1a9456b07 100644
    flex: 1;
 diff --git a/packages/app/src/components/cx-account/cx-canvas-slots.ts b/packages/app/src/components/cx-account/cx-canvas-slots.ts
 new file mode 100644
-index 000000000..8e957477d
+index 000000000..7fbd074c6
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-canvas-slots.ts
-@@ -0,0 +1,195 @@
+@@ -0,0 +1,210 @@
 +// [dokng] 画布四槽位状态 + 投递 payload 合成（待办 4）。
 +//
 +// 账户面板每个 key 卡片有四个按钮，对应画布的四类模型能力：
@@ -392,6 +392,15 @@ index 000000000..8e957477d
 +// 四类能力的固定顺序，用于稳定遍历。
 +const CAPABILITIES: CanvasModelCapability[] = ["image", "video", "text", "audio"]
 +
++// [dokng] 四类能力的中文标签，用于合成画布渠道名（Dokng:出图|对话|…），让用户在画布渠道列表里
++// 一眼看出「这条渠道 key 被指派了哪些用途」。顺序跟随 CAPABILITIES，保证名字稳定不抖动。
++const CAPABILITY_LABELS: Record<CanvasModelCapability, string> = {
++  image: "出图",
++  video: "视频",
++  text: "对话",
++  audio: "音频",
++}
++
 +// [dokng] 由四槽位 + 已解析 key 列表合成投递 payload。核心规则（按 keyId 分组）：
 +//   - 每个被选中的 key → 一个画布 channel（baseUrl + apiKey + 该 key 按其占用槽位并集过滤的 models）。
 +//   - 同一个 key 占多个槽：合并成一个 channel，models 取所占各能力的并集。
@@ -423,10 +432,16 @@ index 000000000..8e957477d
 +    capsByKey.set(id, list)
 +  }
 +
-+  const channelName = (k: ResolvedKey) => k.label.trim() || "客户端渠道"
 +  const encode = (channelId: string, models: CanvasInjectedModel[], cap: CanvasModelCapability): string | undefined => {
 +    const hit = models.find((m) => m.capability === cap)
 +    return hit ? `${channelId}::${hit.name}` : undefined
++  }
++
++  // [dokng] 画布渠道名：Dokng:出图|对话|… —— 前缀标明来自客户端，后接该 key 被指派的用途标签
++  // （按 CAPABILITIES 固定顺序，用 | 连接），让用户在画布渠道列表里直接看出每条渠道的用途联动。
++  const channelName = (caps: CanvasModelCapability[]) => {
++    const labels = CAPABILITIES.filter((cap) => caps.includes(cap)).map((cap) => CAPABILITY_LABELS[cap])
++    return labels.length > 0 ? `Dokng:${labels.join("|")}` : "Dokng:客户端渠道"
 +  }
 +
 +  const channels: CanvasInjectedChannel[] = []
@@ -435,7 +450,7 @@ index 000000000..8e957477d
 +  for (const [id, caps] of capsByKey) {
 +    const key = byId.get(id)!
 +    const models = modelsForCapabilities(key.models, caps)
-+    channels.push({ id: key.id, name: channelName(key), baseUrl: key.baseURL, apiKey: key.key, models })
++    channels.push({ id: key.id, name: channelName(caps), baseUrl: key.baseURL, apiKey: key.key, models })
 +    modelsByKey.set(id, models)
 +  }
 +
@@ -458,10 +473,10 @@ index 000000000..8e957477d
 +}
 diff --git a/packages/app/src/pages/canvas-embed.tsx b/packages/app/src/pages/canvas-embed.tsx
 new file mode 100644
-index 000000000..387f17015
+index 000000000..05f6175b2
 --- /dev/null
 +++ b/packages/app/src/pages/canvas-embed.tsx
-@@ -0,0 +1,212 @@
+@@ -0,0 +1,167 @@
 +// [dokng] 画布内嵌宿主（待办 4 + 页面保活）。
 +//
 +// infinite-canvas（React 19 SPA）与宿主（SolidJS）框架异构，不能当组件嵌，只能 <iframe> 隔离。
@@ -470,25 +485,28 @@ index 000000000..387f17015
 +//
 +// —— 页面保活（keep-alive）——
 +// 本组件不再作为 /canvas 路由页渲染（那样切走即卸载、iframe 重建、画布内容与状态全丢）。
-+// 改为常驻挂载在 NewLayout（跨路由不卸载的 router root 外壳，见 app.tsx 注释）里，用 fixed 全屏
-+// 覆盖层承载：靠 useLocation() 判断是否在 /canvas，只切 display 显隐、绝不卸载 iframe。
++// 改为常驻挂载在 NewLayout 的 <main> 内容区（Titlebar 下方、跨路由不卸载的外壳）里，用 absolute
++// inset-0 填满内容区承载：靠 useLocation() 判断是否在 /canvas，只切 display 显隐、绝不卸载 iframe。
 +// 首次进入 /canvas 才创建 iframe（懒挂载：没进过画布就不加载画布资源）；之后 iframe 常驻内存，
 +// 从画布切到别的页面再切回来，画布内容 / 缩放 / 选中态 / 未保存编辑全部原样保留。
 +//
++// —— 顶栏 ——
++// 画布只占 Titlebar 下方内容区、不盖顶栏，故壳的 Titlebar（会话 tab 条 + palette 画布入口 +
++// 账户按钮）在画布内全程可见，来回切会话/画布都方便，无需再补返回/账户极简栏。切回会话点会话
++// tab 即可；开账户 / 切四槽位模型走 Titlebar 右侧账户按钮（CxAccountLauncher）。
++//
 +// 本组件职责：
-+//   1. 渲染全屏 <iframe src="oc://renderer/canvas/index.html">（fixed inset-0，盖住原生 titlebar）。
-+//   2. 把账户面板选中的 key（双槽位 imageKeyId/chatKeyId）合成 channel 数组，postMessage 投给画布。
-+//      投递时机：① 画布发来 dokng:canvas-ready 握手回执后立即投；② 槽位变化时重投（createEffect）。
++//   1. 渲染填满内容区的 <iframe src="oc://renderer/canvas/index.html">（absolute inset-0，不盖 Titlebar）。
++//   2. 把账户面板选中的 key（四槽位 image/video/text/audio）合成 channel 数组，postMessage 投给画布。
++//      投递时机：① 画布发来 dokng:canvas-ready 握手回执后立即投；② 槽位/模型变化时重投（createEffect）。
 +//   3. targetOrigin 严格限 oc://renderer，杜绝把 key 投给非宿主 origin。
 +//
 +// 全部仅 desktop 生效（key 来自 desktop preload 的 window.api）；非 desktop 时进入 /canvas 显示占位提示。
 +
 +import { createEffect, createMemo, createSignal, onCleanup, onMount, Show } from "solid-js"
 +import { useLocation, useNavigate } from "@solidjs/router"
-+import { useDialog } from "@opencode-ai/ui/context/dialog"
 +import { Icon } from "@opencode-ai/ui/icon"
 +import { IconButtonV2 } from "@opencode-ai/ui/v2/icon-button-v2"
-+import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
 +import { usePlatform } from "@/context/platform"
 +import { loadChannelState, resolveKeyList, type ResolvedKey } from "@/components/cx-account/cx-account-api"
 +import {
@@ -511,19 +529,9 @@ index 000000000..387f17015
 +  const platform = usePlatform()
 +  const navigate = useNavigate()
 +  const location = useLocation()
-+  const dialog = useDialog()
 +
 +  // 是否处于画布路由（决定覆盖层显隐）。
 +  const isCanvas = createMemo(() => location.pathname === CANVAS_PATH)
-+
-+  // 打开账户弹窗：画布覆盖层顶栏与 CxAccountLauncher 同在 DialogProvider 作用域下，
-+  // 可直接 dialog.show(CxDialogAccount)，无需 postMessage。弹窗里切 key 的四槽位（生图/
-+  // 视频/文本/音频）→ 本组件 createEffect 订阅到槽位变化即重投 payload，画布模型即时生效。
-+  const openAccount = () => {
-+    void import("@/components/cx-account/cx-account-dialog").then((x) => {
-+      dialog.show(() => <x.CxDialogAccount />)
-+    })
-+  }
 +
 +  // 懒挂载：首次进入 /canvas 才创建 iframe；一旦创建就常驻（保活的关键——之后只切显隐不卸载）。
 +  const [mounted, setMounted] = createSignal(false)
@@ -542,7 +550,7 @@ index 000000000..387f17015
 +  if (platform.platform !== "desktop") {
 +    return (
 +      <Show when={isCanvas()}>
-+        <div class="fixed inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-v2-background-bg-deep text-v2-text-text-muted">
++        <div class="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-v2-background-bg-deep text-v2-text-text-muted">
 +          <span>画布仅在桌面客户端可用。</span>
 +          <IconButtonV2
 +            type="button"
@@ -613,55 +621,17 @@ index 000000000..387f17015
 +    post()
 +  })
 +
-+  const isMac = platform.os === "macos"
-+
-+  // 常驻覆盖层：mounted 前不渲染 iframe（省资源）；mounted 后常驻，靠 isCanvas 切 display。
-+  // 用 fixed inset-0 全屏覆盖整个窗口（盖住原生 titlebar），与保活前 /canvas 的观感一致。
++  // 常驻内容区层：mounted 前不渲染 iframe（省资源）；mounted 后常驻，靠 isCanvas 切 display。
++  // 挂在 NewLayout 的 <main> 内容区（Titlebar 下方），用 absolute inset-0 填满内容区、不盖
++  // Titlebar，故壳顶栏（会话 tab + palette 画布入口 + 账户按钮）画布内全程可见，切会话/画布都方便。
++  // 无需再补返回/账户极简栏，也无需避让 macOS 红绿灯（红绿灯落在常驻可见的 Titlebar 上）。
 +  return (
 +    <Show when={mounted()}>
 +      <div
-+        class="fixed inset-0 z-50 flex flex-col bg-v2-background-bg-deep"
++        class="absolute inset-0 z-10 flex flex-col bg-v2-background-bg-deep"
 +        style={{ display: isCanvas() ? undefined : "none" }}
 +        aria-hidden={isCanvas() ? undefined : "true"}
 +      >
-+        {/* 顶部精简栏：画布覆盖层盖住了原生 titlebar，此处补一条——
-+            ① 窗口拖拽区（[app-region:drag]：Electron 无边框窗口靠 CSS app-region 拖窗）；
-+            ② 容纳返回入口（进得去也出得来）；
-+            ③ macOS 左侧留出红绿灯宽度（84px），避免返回按钮压住原生红绿灯。
-+            返回按钮与提示标 [app-region:no-drag]，保证可点击不被拖拽区吞掉事件。 */}
-+        <div
-+          class="shrink-0 flex items-center gap-2 h-9 px-2 bg-v2-background-bg-deep border-b border-v2-border-border-muted [app-region:drag]"
-+          style={{ "padding-left": isMac ? "84px" : undefined }}
-+        >
-+          <TooltipV2 placement="bottom" value="返回">
-+            <IconButtonV2
-+              type="button"
-+              variant="ghost-muted"
-+              size="small"
-+              class="[app-region:no-drag]"
-+              icon={<Icon name="arrow-left" size="small" />}
-+              onClick={goBack}
-+              aria-label="返回"
-+            />
-+          </TooltipV2>
-+          <TooltipV2 placement="bottom" value="账户 / 切换渠道模型">
-+            <IconButtonV2
-+              type="button"
-+              variant="ghost-muted"
-+              size="small"
-+              class="[app-region:no-drag]"
-+              icon={<Icon name="user" size="small" />}
-+              onClick={openAccount}
-+              aria-label="账户"
-+            />
-+          </TooltipV2>
-+          <span class="select-none text-v2-text-text-muted text-sm">画布</span>
-+          <Show when={keys().length === 0}>
-+            <span class="ml-auto truncate pr-1 text-v2-text-text-faint text-xs [app-region:no-drag]">
-+              未选择渠道，使用画布默认配置
-+            </span>
-+          </Show>
-+        </div>
 +        <iframe
 +          ref={iframeRef}
 +          src={CANVAS_SRC}
@@ -675,7 +645,7 @@ index 000000000..387f17015
 +  )
 +}
 diff --git a/packages/app/src/pages/layout-new.tsx b/packages/app/src/pages/layout-new.tsx
-index 0bf546343..929d92808 100644
+index 0bf546343..44a4f1f76 100644
 --- a/packages/app/src/pages/layout-new.tsx
 +++ b/packages/app/src/pages/layout-new.tsx
 @@ -8,6 +8,10 @@ import { setNavigate } from "@/utils/notification-click"
@@ -689,16 +659,21 @@ index 0bf546343..929d92808 100644
  
  export default function NewLayout(props: ParentProps) {
    const platform = usePlatform()
-@@ -40,6 +44,9 @@ export default function NewLayout(props: ParentProps) {
-       <main class="flex-1 min-h-0 min-w-0 overflow-x-hidden flex flex-col items-start contain-strict">
+@@ -37,8 +41,13 @@ export default function NewLayout(props: ParentProps) {
+       <Titlebar update={update} />
+       {/* [cx] 账户入口 + dokng:// 深链 + 首启引导（组件内部自判 desktop，非 desktop 渲染 null）。 */}
+       <CxAccountLauncher />
+-      <main class="flex-1 min-h-0 min-w-0 overflow-x-hidden flex flex-col items-start contain-strict">
++      <main class="relative flex-1 min-h-0 min-w-0 overflow-x-hidden flex flex-col items-start contain-strict">
          <Suspense>{props.children}</Suspense>
++        {/* [dokng] 画布常驻宿主（需求 #5 保活）：挂在 main 内容区（Titlebar 下方），用 absolute
++            inset-0 填满内容区、不盖 Titlebar，故壳顶栏（会话 tab + palette 画布入口 + 账户按钮）
++            画布内全程可见，来回切会话/画布都方便。仅在 /canvas 路由 display 显现，切走只 display:none
++            不卸载，iframe 与画布状态跨路由保留。仅 desktop 实际渲染。 */}
++        <CanvasHost />
        </main>
-+      {/* [dokng] 画布常驻宿主（需求 #5 保活）：全屏 fixed 覆盖层，仅在 /canvas 路由显示，
-+          切走只 display:none 不卸载，iframe 与画布状态跨路由保留。仅 desktop 实际渲染。 */}
-+      <CanvasHost />
        {import.meta.env.DEV && <DebugBar inline />}
        <TabsInfoPopup />
-       <ToastRegion v2 />
 diff --git a/packages/desktop/electron.vite.config.ts b/packages/desktop/electron.vite.config.ts
 index 534522681..cb70a81d9 100644
 --- a/packages/desktop/electron.vite.config.ts
