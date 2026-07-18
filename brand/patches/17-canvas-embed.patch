@@ -14,59 +14,91 @@ index 5592e2f4e..5bee17244 100644
    )
  }
 diff --git a/packages/app/src/components/cx-account/cx-account-dialog.tsx b/packages/app/src/components/cx-account/cx-account-dialog.tsx
-index 0073fb3cf..5d276e19f 100644
+index 0073fb3cf..a2a2f3c41 100644
 --- a/packages/app/src/components/cx-account/cx-account-dialog.tsx
 +++ b/packages/app/src/components/cx-account/cx-account-dialog.tsx
-@@ -44,6 +44,8 @@ import {
+@@ -44,6 +44,17 @@ import {
    type KeyProfileState,
    type ResolvedKey,
  } from "./cx-account-api"
-+// [dokng] 画布双槽位状态（待办 4）：账户面板写槽位，画布页读并投递。
-+import { canvasChatKeyId, canvasImageKeyId, toggleCanvasChatKey, toggleCanvasImageKey } from "./cx-canvas-slots"
++// [dokng] 画布四槽位状态（待办 4）：账户面板写槽位，画布页读并投递。
++import {
++  canvasAudioKeyId,
++  canvasImageKeyId,
++  canvasTextKeyId,
++  canvasVideoKeyId,
++  toggleCanvasAudioKey,
++  toggleCanvasImageKey,
++  toggleCanvasTextKey,
++  toggleCanvasVideoKey,
++} from "./cx-canvas-slots"
  
  // [cx] US-008/US-009: 单条 key 列表项。按各自 key 独立展示 profile（loading/error/ready）；点击整行
  // 切换激活，选中态由背景与强调边框表达，操作区只保留编辑 label / 删除（builtin 条目不可管理）。
-@@ -54,6 +56,11 @@ function KeyCard(props: {
+@@ -54,6 +65,15 @@ function KeyCard(props: {
    onActivate: (entry: ResolvedKey) => void
    onSaveLabel: (id: string, label: string) => void
    onRemove: (id: string) => void
-+  // [dokng] 画布双槽位（待办 4）：该 key 是否已选为作图槽 / 对话槽 + 切换回调。
++  // [dokng] 画布四槽位（待办 4）：该 key 是否已选为生图/视频/文本/音频槽 + 切换回调。
 +  isImageSlot: boolean
-+  isChatSlot: boolean
++  isVideoSlot: boolean
++  isTextSlot: boolean
++  isAudioSlot: boolean
 +  onToggleImageSlot: (id: string) => void
-+  onToggleChatSlot: (id: string) => void
++  onToggleVideoSlot: (id: string) => void
++  onToggleTextSlot: (id: string) => void
++  onToggleAudioSlot: (id: string) => void
  }) {
    const state = () => props.state ?? ({ status: "loading" } as KeyProfileState)
    const [editing, setEditing] = createSignal(false)
-@@ -197,6 +204,35 @@ function KeyCard(props: {
+@@ -197,6 +217,54 @@ function KeyCard(props: {
              </div>
            </Show>
          </div>
 +
-+        {/* [dokng] 画布双槽位入口（待办 4/6）：① 启动作图 → 作图槽，② 启动作图对话 → 对话槽。
++        {/* [dokng] 画布四槽位入口（待办 4/6）：生图 / 视频 / 文本 / 音频，四类模型各一个按钮。
 +            移入身份行右侧——原先绝对定位钉在卡片右上角（right:44px），会压到右侧 io/指标数据上、
 +            且身份列 1fr 的富余留白没被利用（「前面还很宽」）。现改为身份列内 flex 横排、垂直居中，
 +            填掉那片留白、与右侧数据拉开距离，消除挤压；随容器断点自然重排，不再脱离流。
 +            选中态 variant="contrast" 高亮 + tooltip 说明。仅可管理 key 且非编辑/删除确认态显示。
++            用户可自由组合：四类各选一个 key、同一 key 占多槽、只选部分。互不干扰。
 +            stopPropagation 阻止冒泡到卡片整行的切换激活。 */}
 +        <Show when={manageable() && !editing() && !confirmingDelete()}>
 +          <div data-slot="cx-canvas-slots" onClick={(e) => e.stopPropagation()}>
-+            <TooltipV2 value={props.isImageSlot ? "取消作图渠道" : "以此 key 启动作图"} placement="top">
++            <TooltipV2 value={props.isImageSlot ? "取消生图渠道" : "以此 key 启动生图"} placement="top">
 +              <IconButtonV2
-+                aria-label={props.isImageSlot ? "取消作图渠道" : "以此 key 启动作图"}
++                aria-label={props.isImageSlot ? "取消生图渠道" : "以此 key 启动生图"}
 +                variant={props.isImageSlot ? "contrast" : "neutral"}
 +                size="small"
 +                onClick={() => props.onToggleImageSlot(props.entry.id)}
-+                icon={<Icon name="grid-plus" size="small" />}
++                icon={<Icon name="canvas-image" size="small" />}
 +              />
 +            </TooltipV2>
-+            <TooltipV2 value={props.isChatSlot ? "取消作图对话渠道" : "以此 key 启动作图对话"} placement="top">
++            <TooltipV2 value={props.isVideoSlot ? "取消视频渠道" : "以此 key 启动视频"} placement="top">
 +              <IconButtonV2
-+                aria-label={props.isChatSlot ? "取消作图对话渠道" : "以此 key 启动作图对话"}
-+                variant={props.isChatSlot ? "contrast" : "neutral"}
++                aria-label={props.isVideoSlot ? "取消视频渠道" : "以此 key 启动视频"}
++                variant={props.isVideoSlot ? "contrast" : "neutral"}
 +                size="small"
-+                onClick={() => props.onToggleChatSlot(props.entry.id)}
-+                icon={<Icon name="review" size="small" />}
++                onClick={() => props.onToggleVideoSlot(props.entry.id)}
++                icon={<Icon name="canvas-video" size="small" />}
++              />
++            </TooltipV2>
++            <TooltipV2 value={props.isTextSlot ? "取消文本渠道" : "以此 key 启动文本"} placement="top">
++              <IconButtonV2
++                aria-label={props.isTextSlot ? "取消文本渠道" : "以此 key 启动文本"}
++                variant={props.isTextSlot ? "contrast" : "neutral"}
++                size="small"
++                onClick={() => props.onToggleTextSlot(props.entry.id)}
++                icon={<Icon name="canvas-text" size="small" />}
++              />
++            </TooltipV2>
++            <TooltipV2 value={props.isAudioSlot ? "取消音频渠道" : "以此 key 启动音频"} placement="top">
++              <IconButtonV2
++                aria-label={props.isAudioSlot ? "取消音频渠道" : "以此 key 启动音频"}
++                variant={props.isAudioSlot ? "contrast" : "neutral"}
++                size="small"
++                onClick={() => props.onToggleAudioSlot(props.entry.id)}
++                icon={<Icon name="canvas-audio" size="small" />}
 +              />
 +            </TooltipV2>
 +          </div>
@@ -74,14 +106,18 @@ index 0073fb3cf..5d276e19f 100644
        </header>
  
        <Switch>
-@@ -849,6 +885,10 @@ export function CxDialogAccount() {
+@@ -849,6 +917,14 @@ export function CxDialogAccount() {
                          onActivate={(e) => void handleActivate(e)}
                          onSaveLabel={(id, label) => void handleSaveLabel(id, label)}
                          onRemove={(id) => void handleRemove(id)}
 +                        isImageSlot={canvasImageKeyId() === entry.id}
-+                        isChatSlot={canvasChatKeyId() === entry.id}
++                        isVideoSlot={canvasVideoKeyId() === entry.id}
++                        isTextSlot={canvasTextKeyId() === entry.id}
++                        isAudioSlot={canvasAudioKeyId() === entry.id}
 +                        onToggleImageSlot={(id) => toggleCanvasImageKey(id)}
-+                        onToggleChatSlot={(id) => toggleCanvasChatKey(id)}
++                        onToggleVideoSlot={(id) => toggleCanvasVideoKey(id)}
++                        onToggleTextSlot={(id) => toggleCanvasTextKey(id)}
++                        onToggleAudioSlot={(id) => toggleCanvasAudioKey(id)}
                        />
                      )}
                    </For>
@@ -156,17 +192,18 @@ index 2c55b052a..28b21f853 100644
        )}
      </Show>
 diff --git a/packages/app/src/components/cx-account/cx-account.css b/packages/app/src/components/cx-account/cx-account.css
-index f073cd07f..543ca5fd5 100644
+index f073cd07f..1a9456b07 100644
 --- a/packages/app/src/components/cx-account/cx-account.css
 +++ b/packages/app/src/components/cx-account/cx-account.css
-@@ -432,6 +432,25 @@
+@@ -432,6 +432,26 @@
    gap: 8px;
  }
  
-+/* [dokng] 画布双槽位入口（启动作图 / 启动作图对话）：从原「绝对定位钉右上角」（right:44px、
++/* [dokng] 画布四槽位入口（生图 / 视频 / 文本 / 音频）：从原「绝对定位钉右上角」（right:44px、
 +   会压到右侧 io/指标数据）改为身份列（cx-key-card-head，1fr）内的 flex 子项，靠右排布，
 +   填掉身份列吸收的富余留白（「前面还很宽」），与右侧数据列拉开距离，消除挤压。
-+   flex-shrink:0 保证 label 再长也不压缩按钮；随容器断点跟 header 一起重排，不再脱离流。
++   四个 small 按钮（约 92px：4×20px + 3×4px gap）横排；flex-shrink:0 保证 label 再长也不压缩按钮，
++   label 过长以 ellipsis 兜底；随容器断点跟 header 一起重排，不再脱离流。
 +   与删除/编辑同为 IconButtonV2 small。常态半透明，hover / 选中态转实；已选槽位 variant="contrast" 高亮。 */
 +.cx-account-body [data-slot="cx-canvas-slots"] {
 +  display: flex;
@@ -187,16 +224,18 @@ index f073cd07f..543ca5fd5 100644
    flex: 1;
 diff --git a/packages/app/src/components/cx-account/cx-canvas-slots.ts b/packages/app/src/components/cx-account/cx-canvas-slots.ts
 new file mode 100644
-index 000000000..b1389e19a
+index 000000000..db60f0286
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-canvas-slots.ts
-@@ -0,0 +1,154 @@
-+// [dokng] 画布双槽位状态 + 投递 payload 合成（待办 4）。
+@@ -0,0 +1,185 @@
++// [dokng] 画布四槽位状态 + 投递 payload 合成（待办 4）。
 +//
-+// 账户面板每个 key 卡片有两个按钮：① 启动作图、② 启动作图对话。宿主维护两个独立槽位：
-+//   - 作图槽 imageKeyId ← 点了「启动作图」的 key（供 image/video 类模型）
-+//   - 对话槽 chatKeyId  ← 点了「启动作图对话」的 key（供 text 类模型）
-+// 用户可自由组合：分开选两个 key、同一 key 两个都点、只点一个。互不干扰。
++// 账户面板每个 key 卡片有四个按钮，对应画布的四类模型能力：
++//   - 生图槽 imageKeyId ← 点了「生图」的 key（供 image 类模型）
++//   - 视频槽 videoKeyId ← 点了「视频」的 key（供 video 类模型）
++//   - 文本槽 textKeyId  ← 点了「文本」的 key（供 text 类模型）
++//   - 音频槽 audioKeyId ← 点了「音频」的 key（供 audio 类模型）
++// 用户可自由组合：四类各选一个 key、同一个 key 占多个槽、只选部分。互不干扰。
 +//
 +// 本模块只管「哪个 key 在哪个槽」+「由槽位 + key 列表合成投给画布的 channel 数组」。
 +// 纯前端状态，模块级 signal 跨账户面板（写）与画布页（读+投递）共享，无副作用、无网络。
@@ -232,28 +271,42 @@ index 000000000..b1389e19a
 +}
 +
 +// ============================================================================
-+// 双槽位状态（模块级全局，跨组件共享）
++// 四槽位状态（模块级全局，跨组件共享）
 +// ============================================================================
 +
 +const [imageKeyId, setImageKeyId] = createSignal<string | null>(null)
-+const [chatKeyId, setChatKeyId] = createSignal<string | null>(null)
++const [videoKeyId, setVideoKeyId] = createSignal<string | null>(null)
++const [textKeyId, setTextKeyId] = createSignal<string | null>(null)
++const [audioKeyId, setAudioKeyId] = createSignal<string | null>(null)
 +
 +export const canvasImageKeyId = imageKeyId
-+export const canvasChatKeyId = chatKeyId
++export const canvasVideoKeyId = videoKeyId
++export const canvasTextKeyId = textKeyId
++export const canvasAudioKeyId = audioKeyId
 +
-+// 点「启动作图」：切到该 key（再点同一个则取消，作图槽清空）。
++// 点「生图」：切到该 key（再点同一个则取消，生图槽清空）。
 +export function toggleCanvasImageKey(id: string) {
 +  setImageKeyId((prev) => (prev === id ? null : id))
 +}
 +
-+// 点「启动作图对话」：切到该 key（再点同一个则取消，对话槽清空）。
-+export function toggleCanvasChatKey(id: string) {
-+  setChatKeyId((prev) => (prev === id ? null : id))
++// 点「视频」：切到该 key（再点同一个则取消，视频槽清空）。
++export function toggleCanvasVideoKey(id: string) {
++  setVideoKeyId((prev) => (prev === id ? null : id))
++}
++
++// 点「文本」：切到该 key（再点同一个则取消，文本槽清空）。
++export function toggleCanvasTextKey(id: string) {
++  setTextKeyId((prev) => (prev === id ? null : id))
++}
++
++// 点「音频」：切到该 key（再点同一个则取消，音频槽清空）。
++export function toggleCanvasAudioKey(id: string) {
++  setAudioKeyId((prev) => (prev === id ? null : id))
 +}
 +
 +// 是否已选中任一槽位（决定「画布」入口是否可直接进入并投递有效渠道）。
 +export function hasAnyCanvasSlot(): boolean {
-+  return imageKeyId() !== null || chatKeyId() !== null
++  return imageKeyId() !== null || videoKeyId() !== null || textKeyId() !== null || audioKeyId() !== null
 +}
 +
 +// ============================================================================
@@ -285,72 +338,87 @@ index 000000000..b1389e19a
 +  return "text"
 +}
 +
-+// [dokng] 一个 key 的模型名列表 → 带 capability 的模型数组。
-+// 作图槽的 key：只保留 image/video 类模型；对话槽的 key：只保留 text 类模型；
-+// audio 归入对话槽（画布把 audio 作为文本类对话的语音扩展）。
++// [dokng] 一个 key 的模型名列表 → 带 capability 的模型数组，按目标能力集过滤。
 +// 若过滤后为空（该 key 没有对应类型的模型），回退全量按各自 capability 下发，避免画布无模型可选。
-+function modelsForSlot(models: string[], slot: "image" | "chat"): CanvasInjectedModel[] {
++function modelsForCapabilities(models: string[], wanted: CanvasModelCapability[]): CanvasInjectedModel[] {
 +  const all = models.map((name) => ({ name, capability: guessCapability(name) }))
-+  const wanted: CanvasModelCapability[] = slot === "image" ? ["image", "video"] : ["text", "audio"]
 +  const filtered = all.filter((m) => wanted.includes(m.capability))
 +  return filtered.length > 0 ? filtered : all
 +}
 +
-+// [dokng] 由两槽位 + 已解析 key 列表合成投递 payload。核心规则：
-+//   - 每个被选中的 key → 一个画布 channel（baseUrl + apiKey + 该 key 按槽位过滤的 models）。
-+//   - 两槽同一个 key：合并成一个 channel，models 取该 key 的 image/video/text/audio 全类。
-+//   - 两槽不同 key：两个 channel，各自只带对应类型模型。
++// 四类能力的固定顺序，用于稳定遍历。
++const CAPABILITIES: CanvasModelCapability[] = ["image", "video", "text", "audio"]
++
++// [dokng] 由四槽位 + 已解析 key 列表合成投递 payload。核心规则（按 keyId 分组）：
++//   - 每个被选中的 key → 一个画布 channel（baseUrl + apiKey + 该 key 按其占用槽位并集过滤的 models）。
++//   - 同一个 key 占多个槽：合并成一个 channel，models 取所占各能力的并集。
++//   - 不同 key 占不同槽：各成一个 channel，只带对应类型模型。
 +//   - 都没选：channels 为空（画布保持自身默认，不被覆盖）。
 +// 同时给出各类默认模型选择（channelId::modelName），让画布切到刚接入的渠道模型。
-+export function buildCanvasPayload(keys: ResolvedKey[], imgId: string | null, chatId: string | null): CanvasConfigPayload {
++export function buildCanvasPayload(
++  keys: ResolvedKey[],
++  imgId: string | null,
++  videoId: string | null,
++  textId: string | null,
++  audioId: string | null,
++): CanvasConfigPayload {
 +  const byId = new Map(keys.map((k) => [k.id, k]))
-+  const imgKey = imgId ? byId.get(imgId) : undefined
-+  const chatKey = chatId ? byId.get(chatId) : undefined
++  const slotByCapability: Record<CanvasModelCapability, string | null> = {
++    image: imgId,
++    video: videoId,
++    text: textId,
++    audio: audioId,
++  }
 +
-+  const channels: CanvasInjectedChannel[] = []
++  // 按 keyId 归并：每个被选中的 key → 它占用了哪些能力槽。
++  const capsByKey = new Map<string, CanvasModelCapability[]>()
++  for (const cap of CAPABILITIES) {
++    const id = slotByCapability[cap]
++    if (!id || !byId.has(id)) continue
++    const list = capsByKey.get(id) ?? []
++    list.push(cap)
++    capsByKey.set(id, list)
++  }
++
++  const channelName = (k: ResolvedKey) => k.label.trim() || "客户端渠道"
 +  const encode = (channelId: string, models: CanvasInjectedModel[], cap: CanvasModelCapability): string | undefined => {
 +    const hit = models.find((m) => m.capability === cap)
 +    return hit ? `${channelId}::${hit.name}` : undefined
 +  }
 +
-+  let imageModel: string | undefined
-+  let videoModel: string | undefined
-+  let textModel: string | undefined
-+  let audioModel: string | undefined
++  const channels: CanvasInjectedChannel[] = []
++  const modelsByKey = new Map<string, CanvasInjectedModel[]>()
 +
-+  const channelName = (k: ResolvedKey) => k.label.trim() || "客户端渠道"
-+
-+  if (imgKey && chatKey && imgKey.id === chatKey.id) {
-+    // 同一 key 两槽：一个 channel 供全类模型。
-+    const models: CanvasInjectedModel[] = imgKey.models.map((name) => ({ name, capability: guessCapability(name) }))
-+    channels.push({ id: imgKey.id, name: channelName(imgKey), baseUrl: imgKey.baseURL, apiKey: imgKey.key, models })
-+    imageModel = encode(imgKey.id, models, "image")
-+    videoModel = encode(imgKey.id, models, "video")
-+    textModel = encode(imgKey.id, models, "text")
-+    audioModel = encode(imgKey.id, models, "audio")
-+  } else {
-+    if (imgKey) {
-+      const models = modelsForSlot(imgKey.models, "image")
-+      channels.push({ id: imgKey.id, name: channelName(imgKey), baseUrl: imgKey.baseURL, apiKey: imgKey.key, models })
-+      imageModel = encode(imgKey.id, models, "image")
-+      videoModel = encode(imgKey.id, models, "video")
-+    }
-+    if (chatKey) {
-+      const models = modelsForSlot(chatKey.models, "chat")
-+      channels.push({ id: chatKey.id, name: channelName(chatKey), baseUrl: chatKey.baseURL, apiKey: chatKey.key, models })
-+      textModel = encode(chatKey.id, models, "text")
-+      audioModel = encode(chatKey.id, models, "audio")
-+    }
++  for (const [id, caps] of capsByKey) {
++    const key = byId.get(id)!
++    const models = modelsForCapabilities(key.models, caps)
++    channels.push({ id: key.id, name: channelName(key), baseUrl: key.baseURL, apiKey: key.key, models })
++    modelsByKey.set(id, models)
 +  }
 +
-+  return { type: "dokng:canvas-config", channels, imageModel, videoModel, textModel, audioModel }
++  // 各类默认模型：取该能力所选 key 的 channel 里匹配该 capability 的第一个模型。
++  const pick = (cap: CanvasModelCapability): string | undefined => {
++    const id = slotByCapability[cap]
++    if (!id) return undefined
++    const models = modelsByKey.get(id)
++    return models ? encode(id, models, cap) : undefined
++  }
++
++  return {
++    type: "dokng:canvas-config",
++    channels,
++    imageModel: pick("image"),
++    videoModel: pick("video"),
++    textModel: pick("text"),
++    audioModel: pick("audio"),
++  }
 +}
 diff --git a/packages/app/src/pages/canvas-embed.tsx b/packages/app/src/pages/canvas-embed.tsx
 new file mode 100644
-index 000000000..1054105af
+index 000000000..0f97fc345
 --- /dev/null
 +++ b/packages/app/src/pages/canvas-embed.tsx
-@@ -0,0 +1,167 @@
+@@ -0,0 +1,197 @@
 +// [dokng] 画布内嵌宿主（待办 4 + 页面保活）。
 +//
 +// infinite-canvas（React 19 SPA）与宿主（SolidJS）框架异构，不能当组件嵌，只能 <iframe> 隔离。
@@ -374,12 +442,19 @@ index 000000000..1054105af
 +
 +import { createEffect, createMemo, createSignal, onCleanup, onMount, Show } from "solid-js"
 +import { useLocation, useNavigate } from "@solidjs/router"
++import { useDialog } from "@opencode-ai/ui/context/dialog"
 +import { Icon } from "@opencode-ai/ui/icon"
 +import { IconButtonV2 } from "@opencode-ai/ui/v2/icon-button-v2"
 +import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
 +import { usePlatform } from "@/context/platform"
 +import { loadChannelState, resolveKeyList, type ResolvedKey } from "@/components/cx-account/cx-account-api"
-+import { buildCanvasPayload, canvasChatKeyId, canvasImageKeyId } from "@/components/cx-account/cx-canvas-slots"
++import {
++  buildCanvasPayload,
++  canvasAudioKeyId,
++  canvasImageKeyId,
++  canvasTextKeyId,
++  canvasVideoKeyId,
++} from "@/components/cx-account/cx-canvas-slots"
 +
 +// 画布产物在 oc://renderer/canvas/ 下的入口；协议层已白名单 out/renderer 全子树。
 +const CANVAS_SRC = "oc://renderer/canvas/index.html"
@@ -392,9 +467,19 @@ index 000000000..1054105af
 +  const platform = usePlatform()
 +  const navigate = useNavigate()
 +  const location = useLocation()
++  const dialog = useDialog()
 +
 +  // 是否处于画布路由（决定覆盖层显隐）。
 +  const isCanvas = createMemo(() => location.pathname === CANVAS_PATH)
++
++  // 打开账户弹窗：画布覆盖层顶栏与 CxAccountLauncher 同在 DialogProvider 作用域下，
++  // 可直接 dialog.show(CxDialogAccount)，无需 postMessage。弹窗里切 key 的四槽位（生图/
++  // 视频/文本/音频）→ 本组件 createEffect 订阅到槽位变化即重投 payload，画布模型即时生效。
++  const openAccount = () => {
++    void import("@/components/cx-account/cx-account-dialog").then((x) => {
++      dialog.show(() => <x.CxDialogAccount />)
++    })
++  }
 +
 +  // 懒挂载：首次进入 /canvas 才创建 iframe；一旦创建就常驻（保活的关键——之后只切显隐不卸载）。
 +  const [mounted, setMounted] = createSignal(false)
@@ -436,7 +521,7 @@ index 000000000..1054105af
 +  const post = () => {
 +    const win = iframeRef?.contentWindow
 +    if (!win || !ready()) return
-+    const payload = buildCanvasPayload(keys(), canvasImageKeyId(), canvasChatKeyId())
++    const payload = buildCanvasPayload(keys(), canvasImageKeyId(), canvasVideoKeyId(), canvasTextKeyId(), canvasAudioKeyId())
 +    win.postMessage(payload, CANVAS_ORIGIN)
 +  }
 +
@@ -460,9 +545,11 @@ index 000000000..1054105af
 +
 +  // 槽位变化或 key 列表加载完成后重投（画布已 ready 时才实际发送）。
 +  createEffect(() => {
-+    // 显式订阅这三个信号，任一变化触发重投。
++    // 显式订阅四槽位信号 + key 列表 + ready，任一变化触发重投。
 +    void canvasImageKeyId()
-+    void canvasChatKeyId()
++    void canvasVideoKeyId()
++    void canvasTextKeyId()
++    void canvasAudioKeyId()
 +    void keys()
 +    void ready()
 +    post()
@@ -497,6 +584,17 @@ index 000000000..1054105af
 +              icon={<Icon name="arrow-left" size="small" />}
 +              onClick={goBack}
 +              aria-label="返回"
++            />
++          </TooltipV2>
++          <TooltipV2 placement="bottom" value="账户 / 切换渠道模型">
++            <IconButtonV2
++              type="button"
++              variant="ghost-muted"
++              size="small"
++              class="[app-region:no-drag]"
++              icon={<Icon name="user" size="small" />}
++              onClick={openAccount}
++              aria-label="账户"
 +            />
 +          </TooltipV2>
 +          <span class="select-none text-v2-text-text-muted text-sm">画布</span>
@@ -634,3 +732,35 @@ index 79b0e30af..3485a84fd 100644
 +// [dokng] 画布产物构建（待办 4）：以 VITE_BASE=/canvas/ 构建第二上游 infinite-canvas，
 +// 产出 web/dist/，供 electron.vite 的 dokng:copy-canvas 钩子拷进 out/renderer/canvas/。
 +await $`bun ./scripts/build-canvas.ts`
+diff --git a/packages/ui/src/v2/components/icon.tsx b/packages/ui/src/v2/components/icon.tsx
+index b22d3140f..6501f1603 100644
+--- a/packages/ui/src/v2/components/icon.tsx
++++ b/packages/ui/src/v2/components/icon.tsx
+@@ -149,6 +149,27 @@ const icons = {
+     viewBox: "0 0 16 16",
+     body: `<path d="M13.1112 13.5555V14.0555H13.6112V13.5555H13.1112ZM2.889 13.5555H2.389L2.389 14.0555H2.889V13.5555ZM3.38901 5.55546L3.38901 5.05546L2.38901 5.05546L2.38901 5.55546L2.88901 5.55546L3.38901 5.55546ZM14.4446 2.44434H14.9446V1.94434L14.4446 1.94434L14.4446 2.44434ZM14.4446 5.55545L14.4446 6.05545L14.9446 6.05545V5.55545H14.4446ZM1.55566 5.55546L1.05566 5.55545L1.05566 6.05546L1.55566 6.05546L1.55566 5.55546ZM1.5557 2.44436L1.5557 1.94436L1.05571 1.94436L1.0557 2.44435L1.5557 2.44436ZM13.1112 5.55546H12.6112V13.5555H13.1112H13.6112V5.55546H13.1112ZM2.889 13.5555H3.389L3.38901 5.55546L2.88901 5.55546L2.38901 5.55546L2.389 13.5555H2.889ZM14.4446 2.44434H13.9446V5.55545H14.4446H14.9446V2.44434H14.4446ZM1.55566 5.55546L2.05566 5.55547L2.0557 2.44436L1.5557 2.44436L1.0557 2.44435L1.05566 5.55545L1.55566 5.55546ZM6.22234 8.22213V8.72213H9.7779V8.22213V7.72213H6.22234V8.22213ZM13.1112 13.5555V13.0555H2.889V13.5555V14.0555H13.1112V13.5555ZM1.5557 2.44436L1.5557 2.94436L14.4446 2.94434L14.4446 2.44434L14.4446 1.94434L1.5557 1.94436L1.5557 2.44436ZM14.4446 5.55545L14.4446 5.05545L1.55566 5.05546L1.55566 5.55546L1.55566 6.05546L14.4446 6.05545L14.4446 5.55545Z" fill="currentColor"/>`,
+   },
++  // [dokng] 画布四类模型槽位图标（生图/视频/文本/音频），语义明显区分，见 cx-account-dialog KeyCard。
++  // 生图：相框 + 山峰 + 太阳（经典图片图标）。
++  "canvas-image": {
++    viewBox: "0 0 16 16",
++    body: `<rect x="2" y="3" width="12" height="10" rx="1" stroke="currentColor"/><circle cx="5.5" cy="6.5" r="1" stroke="currentColor"/><path d="M2.5 11.5L6 8L8.5 10.5L10.5 8.5L13.5 11.5" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/>`,
++  },
++  // 视频：屏幕矩形 + 居中播放三角。
++  "canvas-video": {
++    viewBox: "0 0 16 16",
++    body: `<rect x="2" y="3.5" width="12" height="9" rx="1" stroke="currentColor"/><path d="M6.75 6.25L10 8L6.75 9.75V6.25Z" fill="currentColor"/>`,
++  },
++  // 文本：大写 T 字形（顶横 + 竖笔）。
++  "canvas-text": {
++    viewBox: "0 0 16 16",
++    body: `<path d="M3.5 4H12.5M8 4V12" stroke="currentColor" stroke-linecap="round"/>`,
++  },
++  // 音频：高低起伏的声波竖条。
++  "canvas-audio": {
++    viewBox: "0 0 16 16",
++    body: `<path d="M3 6.5V9.5M6 4V12M9 5.5V10.5M12 7V9" stroke="currentColor" stroke-linecap="round"/>`,
++  },
+ }
+ 
+ const spriteID = "opencode-v2-icon-sprite"

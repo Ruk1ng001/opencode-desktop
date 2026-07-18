@@ -1,20 +1,23 @@
-# 08-self-update-prerelease —— 放行 prerelease，让 cx 自更新能选中 -cx.N 版本
+# 08-self-update-prerelease —— 放行 prerelease（allowPrerelease=true）
 #
 # 职责：把 updater.ts 的 autoUpdater.allowPrerelease 从 false 改为 true。
 #
-# 为什么必须开：
-#   cx 版本号是 <opencode版本>-cx.N，semver 里 -cx.N 属 prerelease 记法。
-#   allowPrerelease=false 时 electron-updater 走 GitHub /releases/latest，而 GitHub 把带 -
-#   后缀的 release 判为 pre-release、排除在 Latest 之外 → 更新器永远查不到 cx 版本。
-#   开启后走 atom-feed 分支：按当前版本的 prerelease 分量 "cx" 匹配 release 的 -cx.N，正确选中
-#   最新版（首次会探一次 cx*.yml 得 404，随后 fallback 到 electron-builder 实际生成的 latest*.yml，
-#   功能正常，仅一次多余请求）。
+# 现状说明（重要）：
+#   dokng 版本号是 <opencode版本>-dokng.N，semver 里 -dokng.N 属 prerelease 记法。
+#   本开关只对 electron-updater 的 GitHubProvider 有意义（GitHub 把带 - 后缀的 release 判为
+#   pre-release、排除在 /releases/latest 之外，需放行 prerelease 才能选中）。
+#   但当前默认更新源是 GenericProvider（R2，见 brand/electron-builder.brand.ts 的 updateBaseUrl /
+#   useR2）——它直接拉 latest*.yml 按 semver 比对、完全忽略 allowPrerelease。因此本补丁在现网
+#   属「无害冗余」死代码；保留它是为将来若切回/回退到 GitHub 源时，仍能正确选中 -dokng.N 版本。
 #
 # 配套（非本补丁，在父仓库）：
-#   - brand/electron-builder.brand.ts：publish 源改到本仓库 Ruk1ng001/opencode-desktop；
-#     mac target 加回 zip（macOS 自更新载体，dmg 不能用于更新）。
-#   - .github/workflows/release.yml：build 前注入 cx 版本号到 package.json（否则产物恒为 1.17.15、
+#   - brand/electron-builder.brand.ts：publish 源 = generic(R2 dl.dokng.com) + github(Ruk1ng001/
+#     opencode-desktop)；mac target 含 zip（macOS 自更新载体，dmg 不能用于更新）。运行时 app-update.yml
+#     只写 publish[0]（generic/R2），GitHub 项不做自动 fallback（electron-updater 原生不支持数组回退）。
+#   - .github/workflows/release.yml：build 前注入 dokng 版本号到 package.json（否则产物恒为上游版本、
 #     自更新永远「已是最新」）；上传 latest*.yml 并合并 mac 双架构（finalize-latest-yml.ts）。
+#   - macOS 自更新前提是代码签名 + 公证；release.yml 现硬编码 CX_UNSIGNED=1 出未签名包，Squirrel.Mac
+#     + Gatekeeper 会拦下 mac 自更新（Win/Linux 不受影响）。这属签名/证书配置，非本补丁可修。
 #
 # 依赖：独立文件（updater.ts），不与 01-07 共享，按 NN 序在最后应用即可。
 # 应用（在 opencode/ 内，基线为 brand/BASE_SHA）：
@@ -28,10 +31,10 @@ index cd483ed72..d4d9e21af 100644
    autoUpdater.logger = logger
    autoUpdater.channel = "latest"
 -  autoUpdater.allowPrerelease = false
-+  // [cx] cx 版本号是 <opencode版本>-cx.N（semver 里 -cx.N 属 prerelease）。必须放行 prerelease，
-+  // 否则 electron-updater 走 /releases/latest（GitHub 把带 - 后缀的 release 排除在 Latest 外）
-+  // → 永远查不到 cx 版本。开启后走 atom-feed 分支，按当前版本的 prerelease 分量 "cx" 匹配
-+  // release 的 -cx.N，正确选中最新版（会先探一次 cx*.yml 404 再 fallback 到 latest*.yml，功能正常）。
++  // [dokng] dokng 版本号是 <opencode版本>-dokng.N（semver 里 -dokng.N 属 prerelease）。放行 prerelease
++  // 仅对 GitHubProvider 生效（用于 /releases/latest 会排除带 - 后缀 release 的场景）。当前默认走
++  // GenericProvider（R2，见 brand/electron-builder.brand.ts），它按 latest*.yml 比 semver、忽略此开关，
++  // 故此行在现网属无害冗余；保留是为将来若切回 GitHub 源作 fallback 时仍能选中 -dokng.N 版本。
 +  autoUpdater.allowPrerelease = true
    autoUpdater.allowDowngrade = true
    autoUpdater.autoDownload = false
