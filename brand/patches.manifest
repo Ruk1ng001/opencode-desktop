@@ -299,8 +299,12 @@ packages/app/src/components/session/session-new-design-view.tsx
 #     cx-account-dialog.tsx 每张 key 卡片加四个槽位按钮（移入身份行 flex 右侧，非绝对定位角标，
 #     避免挤压右侧数据），画布页读槽位并合成 payload 投递（画布 web 侧本就四能力，宿主侧解耦即可）。
 #     v2/components/icon.tsx 加四个语义图标 canvas-image/video/text/audio（该 v2 图标文件此前无补丁，
-#     由本补丁新增这 4 个图标）。cx-account-launcher.tsx 标题栏加 palette 画布入口；canvas-embed.tsx
-#     覆盖层顶栏加账户按钮（同 DialogProvider 作用域，直接 dialog.show(CxDialogAccount)，无需 postMessage）。
+#     由本补丁新增这 4 个图标）。cx-account-launcher.tsx 标题栏加彩色 palette 画布入口；
+#     canvas-embed.tsx 常驻挂在 NewLayout 的 main 内容区（absolute inset-0，只占 Titlebar 下方），
+#     壳 Titlebar 的会话 tab / 画布 / 账户入口在画布内全程可见，不再维护重复的画布极简顶栏。
+#   - 模型刷新：账户 key 卡片的 reset 按钮复用既有 channelConfigRefreshKey IPC，一次完成主进程
+#     /v1/models 重拉、store 落盘、内核 config 重写 + dispose 热重载，再通知画布重读并重投；按钮禁用
+#     + 旋转图标 + 成功/失败 notice 提供反馈，tooltip 提醒会短暂重载内核、应在会话空闲时操作。
 #   - 依赖 07（NewLayout 接线 / CxAccountLauncher）、09（cx-account 面板）。layout-new.tsx 与
 #     cx-account.css / cx-account-dialog.tsx 为共享文件，本补丁只叠加画布相关增量。按 NN 序最后应用。
 [17-canvas-embed]
