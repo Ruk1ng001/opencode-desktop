@@ -287,3 +287,27 @@ packages/ui/src/components/icon.tsx
 #   - 独立于其余补丁的文件（仅改 session-new-design-view.tsx），按 NN 序最后应用。
 [16-wordmark-brand]
 packages/app/src/components/session/session-new-design-view.tsx
+
+# 画布嵌入（infinite-canvas 无限画布作为第二上游，以 iframe 嵌进桌面壳）：
+#   - 构建接线：prebuild.ts 触发 build-canvas.ts 把 infinite-canvas/web 产物打进 desktop 资源，
+#     electron.vite.config.ts 暴露产物目录 / 别名，运行时由 canvas-embed.tsx 以 oc://renderer
+#     源加载 iframe（sandbox 含 allow-same-origin 供 IndexedDB 持久化）。
+#   - 保活（需求 #5）：CanvasHost 常驻挂在 NewLayout（layout-new.tsx，跨路由不卸载），iframe 由
+#     mounted 信号懒挂载、之后常驻内存；切走只 display:none 不卸载，画布状态跨路由保留。app.tsx
+#     的 /canvas 路由是 () => null 空占位，真正宿主在 NewLayout。
+#   - 画布双槽位（需求 #4/#6）：cx-canvas-slots.ts 存「作图槽 / 对话槽」key id，账户面板
+#     cx-account-dialog.tsx 每张 key 卡片加两个槽位按钮（移入身份行 flex 右侧，非绝对定位角标，
+#     避免挤压右侧数据），画布页读槽位并投递。cx-account-launcher.tsx 标题栏加 palette 画布入口。
+#   - 依赖 07（NewLayout 接线 / CxAccountLauncher）、09（cx-account 面板）。layout-new.tsx 与
+#     cx-account.css / cx-account-dialog.tsx 为共享文件，本补丁只叠加画布相关增量。按 NN 序最后应用。
+[17-canvas-embed]
+packages/app/src/app.tsx
+packages/app/src/components/cx-account/cx-account-dialog.tsx
+packages/app/src/components/cx-account/cx-account-launcher.tsx
+packages/app/src/components/cx-account/cx-account.css
+packages/app/src/components/cx-account/cx-canvas-slots.ts
+packages/app/src/pages/canvas-embed.tsx
+packages/app/src/pages/layout-new.tsx
+packages/desktop/electron.vite.config.ts
+packages/desktop/scripts/build-canvas.ts
+packages/desktop/scripts/prebuild.ts
