@@ -14,15 +14,16 @@ index 5592e2f4e..5bee17244 100644
    )
  }
 diff --git a/packages/app/src/components/cx-account/cx-account-dialog.tsx b/packages/app/src/components/cx-account/cx-account-dialog.tsx
-index 0073fb3cf..a2a2f3c41 100644
+index 0073fb3cf..9cc04fb56 100644
 --- a/packages/app/src/components/cx-account/cx-account-dialog.tsx
 +++ b/packages/app/src/components/cx-account/cx-account-dialog.tsx
-@@ -44,6 +44,17 @@ import {
+@@ -44,6 +44,18 @@ import {
    type KeyProfileState,
    type ResolvedKey,
  } from "./cx-account-api"
 +// [dokng] 画布四槽位状态（待办 4）：账户面板写槽位，画布页读并投递。
 +import {
++  bumpCanvasModels,
 +  canvasAudioKeyId,
 +  canvasImageKeyId,
 +  canvasTextKeyId,
@@ -35,7 +36,7 @@ index 0073fb3cf..a2a2f3c41 100644
  
  // [cx] US-008/US-009: 单条 key 列表项。按各自 key 独立展示 profile（loading/error/ready）；点击整行
  // 切换激活，选中态由背景与强调边框表达，操作区只保留编辑 label / 删除（builtin 条目不可管理）。
-@@ -54,6 +65,15 @@ function KeyCard(props: {
+@@ -54,6 +66,15 @@ function KeyCard(props: {
    onActivate: (entry: ResolvedKey) => void
    onSaveLabel: (id: string, label: string) => void
    onRemove: (id: string) => void
@@ -51,7 +52,7 @@ index 0073fb3cf..a2a2f3c41 100644
  }) {
    const state = () => props.state ?? ({ status: "loading" } as KeyProfileState)
    const [editing, setEditing] = createSignal(false)
-@@ -197,6 +217,54 @@ function KeyCard(props: {
+@@ -197,6 +218,54 @@ function KeyCard(props: {
              </div>
            </Show>
          </div>
@@ -106,7 +107,39 @@ index 0073fb3cf..a2a2f3c41 100644
        </header>
  
        <Switch>
-@@ -849,6 +917,14 @@ export function CxDialogAccount() {
+@@ -632,6 +701,31 @@ export function CxDialogAccount() {
+     }
+   }
+ 
++  // [dokng] 画布槽位按需拉模型：把 key 选进画布槽位 ≠ 激活它，而模型列表（fetchModelsWith）原本
++  // 只在激活时才拉落盘。若被选 key 尚无 models 缓存，投给画布的 channel 会是空模型 → 画布显示了
++  // 渠道却无模型可联动。故选中槽位（非取消）时，若该 key 无 models，就按需拉一次 /v1/models 落盘，
++  // reloadKeys 刷新本地列表，再 bumpCanvasModels 通知画布页重投带模型的 payload。builtin 条目跳过。
++  async function ensureKeyModels(id: string): Promise<void> {
++    const entry = keys().find((k) => k.id === id)
++    if (!entry || entry.builtin || entry.models.length > 0) return
++    try {
++      const models = await fetchModelsWith(entry.baseURL, entry.key)
++      if (models.length === 0) return
++      await cxChannelApi()?.channelKeysSetModels?.(id, models)
++      await reloadKeys()
++      bumpCanvasModels()
++    } catch {
++      // 拉取失败静默：画布仍收到渠道（只是无模型），不阻断槽位选择。
++    }
++  }
++
++  // [dokng] 槽位切换统一封装：先 toggle 槽位（即时更新 UI + 触发画布重投），再对「选中」态按需拉模型。
++  // 取消（toggle 后该槽不再是本 key）时不拉模型。
++  function handleToggleSlot(toggle: (id: string) => void, isSelectedAfter: (id: string) => boolean, id: string): void {
++    toggle(id)
++    if (isSelectedAfter(id)) void ensureKeyModels(id)
++  }
++
+   return (
+     <Dialog size="x-large" class="cx-account-dialog">
+       <DialogHeader closeLabel="关闭">
+@@ -849,6 +943,14 @@ export function CxDialogAccount() {
                          onActivate={(e) => void handleActivate(e)}
                          onSaveLabel={(id, label) => void handleSaveLabel(id, label)}
                          onRemove={(id) => void handleRemove(id)}
@@ -114,10 +147,10 @@ index 0073fb3cf..a2a2f3c41 100644
 +                        isVideoSlot={canvasVideoKeyId() === entry.id}
 +                        isTextSlot={canvasTextKeyId() === entry.id}
 +                        isAudioSlot={canvasAudioKeyId() === entry.id}
-+                        onToggleImageSlot={(id) => toggleCanvasImageKey(id)}
-+                        onToggleVideoSlot={(id) => toggleCanvasVideoKey(id)}
-+                        onToggleTextSlot={(id) => toggleCanvasTextKey(id)}
-+                        onToggleAudioSlot={(id) => toggleCanvasAudioKey(id)}
++                        onToggleImageSlot={(id) => handleToggleSlot(toggleCanvasImageKey, (x) => canvasImageKeyId() === x, id)}
++                        onToggleVideoSlot={(id) => handleToggleSlot(toggleCanvasVideoKey, (x) => canvasVideoKeyId() === x, id)}
++                        onToggleTextSlot={(id) => handleToggleSlot(toggleCanvasTextKey, (x) => canvasTextKeyId() === x, id)}
++                        onToggleAudioSlot={(id) => handleToggleSlot(toggleCanvasAudioKey, (x) => canvasAudioKeyId() === x, id)}
                        />
                      )}
                    </For>
@@ -224,10 +257,10 @@ index f073cd07f..1a9456b07 100644
    flex: 1;
 diff --git a/packages/app/src/components/cx-account/cx-canvas-slots.ts b/packages/app/src/components/cx-account/cx-canvas-slots.ts
 new file mode 100644
-index 000000000..db60f0286
+index 000000000..8e957477d
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-canvas-slots.ts
-@@ -0,0 +1,185 @@
+@@ -0,0 +1,195 @@
 +// [dokng] 画布四槽位状态 + 投递 payload 合成（待办 4）。
 +//
 +// 账户面板每个 key 卡片有四个按钮，对应画布的四类模型能力：
@@ -307,6 +340,16 @@ index 000000000..db60f0286
 +// 是否已选中任一槽位（决定「画布」入口是否可直接进入并投递有效渠道）。
 +export function hasAnyCanvasSlot(): boolean {
 +  return imageKeyId() !== null || videoKeyId() !== null || textKeyId() !== null || audioKeyId() !== null
++}
++
++// [dokng] 模型缓存版本号：key 的可用模型（/v1/models）只在「激活」或「选进画布槽位后按需拉取」时
++// 才落盘到本地 store。落盘后 bump 此版本号，让画布页（canvas-embed 的 createEffect 订阅它）重新
++// 从 store 读最新 key 列表并重投 payload —— 否则画布收到的 channel 带空 models、四类默认模型全空，
++// 表现为「选了 key 但画布渠道/模型不联动」。仅作变化通知，不承载数据。
++const [modelsVersion, setModelsVersion] = createSignal(0)
++export const canvasModelsVersion = modelsVersion
++export function bumpCanvasModels() {
++  setModelsVersion((v) => v + 1)
 +}
 +
 +// ============================================================================
@@ -415,10 +458,10 @@ index 000000000..db60f0286
 +}
 diff --git a/packages/app/src/pages/canvas-embed.tsx b/packages/app/src/pages/canvas-embed.tsx
 new file mode 100644
-index 000000000..0f97fc345
+index 000000000..387f17015
 --- /dev/null
 +++ b/packages/app/src/pages/canvas-embed.tsx
-@@ -0,0 +1,197 @@
+@@ -0,0 +1,212 @@
 +// [dokng] 画布内嵌宿主（待办 4 + 页面保活）。
 +//
 +// infinite-canvas（React 19 SPA）与宿主（SolidJS）框架异构，不能当组件嵌，只能 <iframe> 隔离。
@@ -452,6 +495,7 @@ index 000000000..0f97fc345
 +  buildCanvasPayload,
 +  canvasAudioKeyId,
 +  canvasImageKeyId,
++  canvasModelsVersion,
 +  canvasTextKeyId,
 +  canvasVideoKeyId,
 +} from "@/components/cx-account/cx-canvas-slots"
@@ -525,9 +569,16 @@ index 000000000..0f97fc345
 +    win.postMessage(payload, CANVAS_ORIGIN)
 +  }
 +
++  // [dokng] 从本地 store 重新拉 key 列表（含账户面板选槽位时按需拉取并落盘的最新 models），
++  // 再触发重投。账户面板 bumpCanvasModels() 后经 canvasModelsVersion 订阅走到这里，确保画布
++  // 拿到刚落盘的模型（onMount 的一次性快照读不到之后缓存的 models）。
++  const refreshKeys = () => {
++    void loadChannelState().then((state) => setKeys(resolveKeyList(state)))
++  }
++
 +  onMount(() => {
 +    // 加载本地 key 列表（供合成 payload）。异步、失败返回空列表，不抛出。
-+    void loadChannelState().then((state) => setKeys(resolveKeyList(state)))
++    refreshKeys()
 +
 +    // 画布就绪握手：收到 dokng:canvas-ready 才认为可投递（画布 listener 已挂好）。
 +    const onMessage = (event: MessageEvent) => {
@@ -541,6 +592,13 @@ index 000000000..0f97fc345
 +    }
 +    window.addEventListener("message", onMessage)
 +    onCleanup(() => window.removeEventListener("message", onMessage))
++  })
++
++  // 账户面板选槽位按需拉到新 models 后 bump 版本 → 这里重新读 store 拿最新 models。
++  // 与下方重投 effect 分离：本 effect 只负责刷新 keys（刷新完 keys() 变化会自然触发重投）。
++  createEffect(() => {
++    void canvasModelsVersion()
++    refreshKeys()
 +  })
 +
 +  // 槽位变化或 key 列表加载完成后重投（画布已 ready 时才实际发送）。
