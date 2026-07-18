@@ -14,7 +14,7 @@ index 5592e2f4e..5bee17244 100644
    )
  }
 diff --git a/packages/app/src/components/cx-account/cx-account-dialog.tsx b/packages/app/src/components/cx-account/cx-account-dialog.tsx
-index 0073fb3cf..d4949c351 100644
+index 0073fb3cf..d12c6e72d 100644
 --- a/packages/app/src/components/cx-account/cx-account-dialog.tsx
 +++ b/packages/app/src/components/cx-account/cx-account-dialog.tsx
 @@ -44,6 +44,18 @@ import {
@@ -33,7 +33,7 @@ index 0073fb3cf..d4949c351 100644
 +  toggleCanvasTextKey,
 +  toggleCanvasVideoKey,
 +} from "./cx-canvas-slots"
-
+ 
  // [cx] US-008/US-009: 单条 key 列表项。按各自 key 独立展示 profile（loading/error/ready）；点击整行
  // 切换激活，选中态由背景与强调边框表达，操作区只保留编辑 label / 删除（builtin 条目不可管理）。
 @@ -54,6 +66,18 @@ function KeyCard(props: {
@@ -108,12 +108,12 @@ index 0073fb3cf..d4949c351 100644
 +          </div>
 +        </Show>
        </header>
-
+ 
        <Switch>
 @@ -274,22 +346,42 @@ function KeyCard(props: {
          </Match>
        </Switch>
-
+ 
 -      {/* [cx] US-009: 编辑操作固定在行末列。删除入口已移到卡片右上角（见 header 上方）。
 -          编辑态时行末显示保存 / 取消；非编辑态只显示编辑名称按钮。 */}
 +      {/* [cx] US-009: 操作固定在行末列。删除入口已移到卡片右上角（见 header 上方）。
@@ -176,7 +176,7 @@ index 0073fb3cf..d4949c351 100644
 @@ -632,6 +726,59 @@ export function CxDialogAccount() {
      }
    }
-
+ 
 +  // [dokng] 画布槽位按需拉模型：把 key 选进画布槽位 ≠ 激活它，而模型列表（fetchModelsWith）原本
 +  // 只在激活时才拉落盘。若被选 key 尚无 models 缓存，投给画布的 channel 会是空模型 → 画布显示了
 +  // 渠道却无模型可联动。故选中槽位（非取消）时，若该 key 无 models，就按需拉一次 /v1/models 落盘，
@@ -218,7 +218,7 @@ index 0073fb3cf..d4949c351 100644
 +      await refreshKey(id)
 +      await reloadKeys()
 +      bumpCanvasModels()
-+      setNotice("模型列表已刷新；opencode 与画布渠道已同步。")
++      setNotice("模型刷新请求已完成；opencode 与画布渠道已重新同步。")
 +    } catch {
 +      setNotice("刷新模型失败，请检查该 key 的渠道地址后重试。")
 +    } finally {
@@ -255,7 +255,7 @@ index 2c55b052a..28b21f853 100644
 --- a/packages/app/src/components/cx-account/cx-account-launcher.tsx
 +++ b/packages/app/src/components/cx-account/cx-account-launcher.tsx
 @@ -18,6 +18,7 @@
-
+ 
  import { onMount, Show } from "solid-js"
  import { Portal } from "solid-js/web"
 +import { useNavigate } from "@solidjs/router"
@@ -268,12 +268,12 @@ index 2c55b052a..28b21f853 100644
    const dialog = useDialog()
 +  const navigate = useNavigate()
    const rightMount = useTitlebarRightMount()
-
+ 
    // 非 desktop（web 等）不渲染任何东西：账户面板依赖 desktop preload 的 window.api。
 @@ -77,22 +79,37 @@ export function CxAccountLauncher() {
      })
    })
-
+ 
 -  // 标题栏右侧账户按钮（#opencode-titlebar-right portal，与原生 status popover 同排）。
 +  // 标题栏右侧入口（#opencode-titlebar-right portal，与原生 status popover 同排）：画布 + 账户。
    return (
@@ -327,7 +327,7 @@ index f073cd07f..79c158e3e 100644
 @@ -432,6 +432,26 @@
    gap: 8px;
  }
-
+ 
 +/* [dokng] 画布四槽位入口（生图 / 视频 / 文本 / 音频）：从原「绝对定位钉右上角」（right:44px、
 +   会压到右侧 io/指标数据）改为身份列（cx-key-card-head，1fr）内的 flex 子项，靠右排布，
 +   填掉身份列吸收的富余留白（「前面还很宽」），与右侧数据列拉开距离，消除挤压。
@@ -354,7 +354,7 @@ index f073cd07f..79c158e3e 100644
 @@ -583,6 +603,24 @@
    transition: opacity 120ms ease;
  }
-
+ 
 +/* [dokng] 模型刷新中的明确反馈：reset 图标缓慢旋转。按钮本身 disabled，避免重复触发内核 dispose；
 +   prefers-reduced-motion 下停动画，保留禁用态 + tooltip「正在刷新模型…」作为状态反馈。 */
 +@keyframes cx-model-refresh-spin {
@@ -777,7 +777,7 @@ index 0bf546343..44a4f1f76 100644
 +// 必须常驻在树里才能保活，故直接 import（lazy 在此无延迟收益，还需 Suspense 边界）；
 +// iframe 本身由组件内 mounted 信号 gate，首次进 /canvas 才真正创建、之后常驻内存。
 +import CanvasHost from "@/pages/canvas-embed"
-
+ 
  export default function NewLayout(props: ParentProps) {
    const platform = usePlatform()
 @@ -37,8 +41,13 @@ export default function NewLayout(props: ParentProps) {
@@ -880,7 +880,7 @@ index 79b0e30af..3485a84fd 100644
 +++ b/packages/desktop/scripts/prebuild.ts
 @@ -8,3 +8,7 @@ await $`bun ./scripts/copy-icons.ts ${channel}`
  await $`bun ./scripts/copy-metainfo.ts ${channel}`
-
+ 
  await $`cd ../opencode && bun script/build-node.ts`
 +
 +// [dokng] 画布产物构建（待办 4）：以 VITE_BASE=/canvas/ 构建第二上游 infinite-canvas，
@@ -916,5 +916,5 @@ index b22d3140f..6501f1603 100644
 +    body: `<path d="M3 6.5V9.5M6 4V12M9 5.5V10.5M12 7V9" stroke="currentColor" stroke-linecap="round"/>`,
 +  },
  }
-
+ 
  const spriteID = "opencode-v2-icon-sprite"
