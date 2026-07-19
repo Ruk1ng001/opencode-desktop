@@ -31,6 +31,11 @@ id_rsa*
 .chief/
 .claude/
 
+# ── Python 缓存 ───────────────────────────────────────────
+# validate-patch.py 等脚本运行时 Python 会生成 __pycache__/*.pyc，纯本地缓存，不进 git。
+__pycache__/
+*.pyc
+
 # ── 并列的第二套定制：cc-switch（独立仓库）─────────────────
 # cc-switch/ 是基于 farion1231/cc-switch 的独立定制仓库（自带 .git 与
 # 自己的 .github/workflows），和本仓库的 opencode/Dokng 各是各的、互不影响。

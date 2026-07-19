@@ -210,6 +210,14 @@ jobs:
           mask "$NEWAPI_MODEL"
           mask "$NEWAPI_TOPUP_URL"
 
+      - name: 预检补丁语法与清单
+        shell: bash
+        run: |
+          # 不创建 worktree、不修改 submodule：先拦截 corrupt patch / CRLF / manifest 漂移，
+          # 避免矩阵构建在落地前序补丁后才于后序 patch 失败。
+          scripts/apply-patches.sh --preflight
+          scripts/apply-canvas-patches.sh --preflight
+
       - name: 重放 brand 补丁到 opencode/
         shell: bash
         run: |

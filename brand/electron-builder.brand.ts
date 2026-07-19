@@ -35,8 +35,14 @@ const brandedProductName = (base.productName ?? UPSTREAM_PRODUCT_NAME).replace(U
 const brandedArtifactName = brand.binName + "-${os}-${arch}.${ext}"
 
 // 无签名凭据时的降级开关（CI 首跑 / 本地验证用）。CX_UNSIGNED=1 时：
-//   - macOS：关闭公证（notarize）与 hardenedRuntime、不签名（identity:null），否则
-//     无 Apple 证书 / API Key 会让 dmg 打包失败；
+//   - macOS：关闭公证（notarize）与 hardenedRuntime，用 ad-hoc 签名（identity:"-"）而非
+//     完全不签名（identity:null）。原因：macOS 自更新走 Squirrel.Mac，它在安装前对「正在
+//     运行的 app」调 SecCodeCopySelf 读代码签名；identity:null 出来的包完全没有签名，读取
+//     失败抛 "Could not get code signature for running application"，更新在 ready⇄installing
+//     间死循环、永远装不上。ad-hoc（codesign -s -，本地自签、无需任何 Apple 证书）让 app
+//     带上可读签名即可通过该校验。hardenedRuntime 仍关闭（ad-hoc + hardenedRuntime 需额外
+//     library-validation entitlement，否则启动崩）。注意：ad-hoc 修复的是「读不到签名」，
+//     Gatekeeper 首次打开仍需用户右键放行；要彻底免右键 + 稳定自更新仍需 Apple Developer ID。
 //   - dmg：关闭 sign；
 //   - Windows：移除上游自定义 signtoolOptions（其内部会调 Azure Trusted Signing，
 //     无 Azure 凭据必然失败），产出未签名 nsis .exe。
@@ -88,8 +94,10 @@ const config: Configuration = {
     // 故 CI 用两个原生 runner（Intel + Apple Silicon）各自 --x64 / --arm64 出包，
     // 这里只保留 target，架构由命令行 --x64 / --arm64 指定，各出各的独立 dmg + zip。
     target: ["dmg", "zip"],
-    // 无凭据降级：关公证 + 不签名 + 关 hardenedRuntime（hardenedRuntime 需签名配套）。
-    ...(unsigned ? { notarize: false, hardenedRuntime: false, identity: null } : {}),
+    // 无凭据降级：关公证 + ad-hoc 签名（identity:"-"，非 null）+ 关 hardenedRuntime。
+    // identity:"-" 让包带上 ad-hoc 签名，Squirrel.Mac 自更新前的 SecCodeCopySelf 才读得到
+    // 签名（identity:null 会让自更新报 "Could not get code signature" 并死循环）。详见上方注释。
+    ...(unsigned ? { notarize: false, hardenedRuntime: false, identity: "-" } : {}),
   },
   dmg: {
     ...base.dmg,

@@ -98,6 +98,9 @@ jobs:
           git -C opencode reset --hard --quiet
           git -C opencode clean -fdq
 
+          # 在改动 submodule 前先做纯格式/manifest 预检；corrupt patch 必须零副作用提前失败。
+          scripts/apply-patches.sh --preflight
+
           # 用统一的重放脚本（strict apply）落地补丁——与 release.yml 同一来源，避免逻辑漂移。
           # 此刻 brand/BASE_SHA 还是旧基线（升级成功后才刷新），脚本会 warn HEAD≠BASE_SHA，
           # 但不致命：apply 模式只要求 opencode/ 工作区干净 + 补丁精确适用；任一补丁失败即非 0

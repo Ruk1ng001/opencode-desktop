@@ -1,0 +1,20 @@
+# 画布补丁分组清单：仅用于文档与自动一致性校验；执行顺序仍以 canvas-patches/*.patch 文件名为准。
+# 每段 section 名必须与同名 .patch 文件一致。
+
+# iframe 宿主配置注入与路由/持久化适配：
+# - client-root-init.tsx 接收宿主 dokng:canvas-config、发送 ready 握手；
+# - router.tsx 改用 hash router，适配 oc://renderer/canvas/index.html；
+# - use-config-store.ts 嵌入态持久化时剥离 apiKey。
+[01-embed-inject]
+web/src/components/layout/client-root-init.tsx
+web/src/router.tsx
+web/src/stores/use-config-store.ts
+
+# 嵌入态 UI 与提示词图片适配：
+# - 精简顶栏主题/版本/GitHub 入口；
+# - 首页只保留 hero；
+# - 提示词图片支持 HTML img、GitHub CDN 与外链图片代理。
+[02-embed-ui]
+web/src/components/layout/user-status-actions.tsx
+web/src/pages/home/index.tsx
+web/src/services/api/prompts.ts

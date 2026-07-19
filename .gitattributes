@@ -1,0 +1,2 @@
+# 补丁文件是可执行的 unified diff，跨平台 checkout 必须保持 LF。
+*.patch text eol=lf

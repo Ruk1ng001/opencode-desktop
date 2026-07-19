@@ -89,6 +89,42 @@ OPENCODE_CONFIG="$PWD/brand/opencode.template.json" opencode
 
 启动后 `/models` 应能看到内置渠道与默认模型，无需任何手动配置。
 
+## 补丁维护与发布前验证
+
+补丁是可执行的 unified diff，不应直接编辑 `.patch` 正文中的 `+` / `-` / 空上下文行。要修改
+补丁内容，应在对应的 pre-N 检查点 worktree 中修改源码，再通过安全导出脚本重新生成：
+
+```sh
+scripts/export-patch.sh opencode 17-canvas-embed --base-worktree .tmp-patch -- \
+  packages/app/src/pages/canvas-embed.tsx packages/app/src/pages/layout-new.tsx
+
+scripts/export-patch.sh canvas 02-embed-ui --base-worktree .tmp-canvas-patch -- \
+  web/src/services/api/prompts.ts
+```
+
+导出脚本先写临时文件，验证 patch 语法后原子替换，再运行完整 strict 累积重放；失败会恢复旧补丁。
+共享文件的 worktree 检查点流程见记忆/定制文档：先应用前序补丁并提交 pre-N baseline，再复制最终文件。
+
+发布或提交前使用：
+
+```sh
+# 零副作用快速预检：manifest、LF 行尾、unified diff 语法（可捕获 corrupt patch）
+scripts/apply-patches.sh --preflight
+scripts/apply-canvas-patches.sh --preflight
+
+# 从锁定基线在临时 worktree strict 累积重放，与 Release CI 完全一致
+scripts/apply-patches.sh --check
+scripts/apply-canvas-patches.sh --check
+
+# 仅用于诊断上游漂移；即使成功，也不代表 strict 发布路径可通过
+scripts/apply-patches.sh --check-3way
+scripts/apply-canvas-patches.sh --check-3way
+```
+
+父仓库 `.gitattributes` 固定 `*.patch text eol=lf`，避免 Windows checkout 把补丁转成 CRLF。
+`brand/patches.manifest` 与 `brand/canvas-patches.manifest` 仅用于文档和一致性校验；真正执行顺序仍由
+patch 目录下的 `NN-*.patch` 文件名决定。
+
 ## 安全约束
 
 - 本目录**不含任何真实密钥或个人 baseURL**——只有占位符与假值示例。

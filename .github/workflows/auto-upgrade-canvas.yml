@@ -98,6 +98,9 @@ jobs:
           git -C infinite-canvas reset --hard --quiet
           git -C infinite-canvas clean -fdq
 
+          # 在改动 submodule 前先做纯格式/manifest 预检；corrupt patch 必须零副作用提前失败。
+          scripts/apply-canvas-patches.sh --preflight
+
           # 用统一的画布重放脚本（strict apply）落地补丁。此刻 CANVAS_BASE_SHA 还是旧基线，
           # 脚本会 warn HEAD≠BASE_SHA，但不致命：apply 模式只要求工作区干净 + 补丁精确适用；
           # 任一补丁失败即非 0 → 步骤失败 → 通知维护者手动介入（上游漂移需人工修补丁）。
