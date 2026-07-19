@@ -86,6 +86,10 @@ jobs:
       - name: 安装 Bun
         if: steps.detect.outputs.need == 'true'
         uses: oven-sh/setup-bun@v2
+        with:
+          # 锁定与 release.yml 发布构建同源的 bun 版本（opencode/package.json），
+          # 避免「升级验证构建用某版本、正式发布用另一版本」的漂移导致「升级时通过、发布时挂」。
+          bun-version-file: opencode/package.json
 
       - name: 切到新 tag 并按 NN 序重放画布补丁（strict apply）
         if: steps.detect.outputs.need == 'true'
@@ -105,7 +109,23 @@ jobs:
           # 脚本会 warn HEAD≠BASE_SHA，但不致命：apply 模式只要求工作区干净 + 补丁精确适用；
           # 任一补丁失败即非 0 → 步骤失败 → 通知维护者手动介入（上游漂移需人工修补丁）。
           echo "按 NN 序重放画布补丁到 $LATEST："
-          scripts/apply-canvas-patches.sh
+          if ! scripts/apply-canvas-patches.sh; then
+            echo "::error::画布补丁 strict apply 失败（上游 $LATEST 漂移）。以下为 3way 诊断，列出冲突 hunk：" >&2
+            # strict 失败后工作区可能已落地部分补丁，先恢复干净再逐补丁 3way 试应用，
+            # 定位真正冲突的 patch/hunk（.rej）。诊断基于正确的新基线（当前已 checkout 到 $LATEST）。
+            git -C infinite-canvas reset --hard --quiet
+            git -C infinite-canvas clean -fdq
+            for p in $(find brand/canvas-patches -maxdepth 1 -name '*.patch' | LC_ALL=C sort); do
+              if git -C infinite-canvas apply --3way --whitespace=nowarn "$PWD/$p" 2>/dev/null; then
+                echo "  3way OK   $(basename "$p")" >&2
+              else
+                echo "  3way 冲突 $(basename "$p")：" >&2
+                git -C infinite-canvas apply --3way "$PWD/$p" 2>&1 | sed 's/^/          /' >&2 || true
+              fi
+            done
+            echo "::error::请本地 rebase 画布补丁到 $LATEST（检查点 worktree + export-patch.sh 重导出），再更新 CANVAS_BASE_SHA/TAG。" >&2
+            exit 1
+          fi
           echo "全部画布补丁 apply 成功。"
 
       - name: 安装依赖 + 构建画布（VITE_BASE=/canvas/，与 desktop 打包一致）
@@ -155,5 +175,17 @@ jobs:
 
           # 只推 main 保存基线推进；**不推 dokng tag**——画布不独立发版，其变更搭下一次
           # opencode 升级 / 手动发布的车出包（见文件头说明）。
-          git push origin HEAD:main
+          # 加 pull --rebase + 重试：canvas 与 opencode 两条升级流水线错开约 84 分钟，
+          # 正常不撞；但手动触发 / 维护者推送可能并发，裸 push 遇 non-fast-forward 会被拒。
+          pushed=false
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then
+              pushed=true
+              break
+            fi
+            echo "push main 第 $attempt 次失败（可能 non-fast-forward），rebase 后重试…" >&2
+            git fetch origin main --quiet || true
+            git rebase origin/main || { git rebase --abort || true; break; }
+          done
+          [ "$pushed" = true ] || { echo "push main 连续 3 次失败，放弃（无污染，可重跑）。" >&2; exit 1; }
           echo "已推送 main（画布基线 → $LATEST）。未推 tag：画布随下次 opencode 发版一起出包。"

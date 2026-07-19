@@ -20,9 +20,14 @@ name: release
 #   - 这些值只在打包 job 的 env 里出现，绝不写入 git、不 echo 到日志。
 #
 # 触发：
-#   - 手动 workflow_dispatch（可强制指定版本 / 强制发布）；
-#   - push 到 main（推代码即自动打包发布，版本号 detect 段按已有 release 自增 -dokng.N）；
-#   - push tag v*-dokng.*（维护者打 tag 即触发发布）。
+#   - 手动 workflow_dispatch（可强制指定版本 / 强制发布，版本号 detect 段按已有 release 自增 -dokng.N）；
+#   - push tag v*-dokng.*（维护者打 tag，或 auto-upgrade 升级成功后打 tag，即触发发布）。
+#
+# 【为何不监听 push:main】历史上曾同时监听 push:main + push:tag，导致 auto-upgrade 升级成功后
+#   一次推 main、一次推 tag，两次 push 各触发一条 release 流水线；两者 github.ref 不同
+#   （refs/heads/main vs refs/tags/…），concurrency 组不互斥 → 并发出包、版本号碰撞、产物互相
+#   覆盖。改为只认 tag：tag 名即确定版本号（无歧义、无需 gh release list 推导），平时推代码到
+#   main 不再触发无谓的全平台构建；要发布就打 tag（手动或 auto-upgrade 自动）。
 #
 # 平台矩阵严格对齐验收标准 #4：
 #   .dmg=macOS runner，.exe=windows runner，.AppImage=linux runner。
@@ -40,8 +45,6 @@ on:
         type: boolean
         default: false
   push:
-    branches:
-      - main
     tags:
       - "v*-dokng.*"
 
@@ -209,6 +212,27 @@ jobs:
           mask "$NEWAPI_API_KEY"
           mask "$NEWAPI_MODEL"
           mask "$NEWAPI_TOPUP_URL"
+
+      - name: 校验 submodule gitlink 与 BASE_SHA 一致
+        shell: bash
+        run: |
+          set -euo pipefail
+          # [dokng] 关键不变式：release 构建 checkout 的是父仓库 gitlink 记录的 submodule commit，
+          # 而补丁是针对 BASE_SHA 验证的。二者必须一致，否则会在「未经补丁验证的 commit」上出包
+          # （gitlink 与 BASE_SHA 漂移的成因：手工提交失误、只改 BASE_SHA 没更 gitlink、rebase 解错）。
+          # auto-upgrade 正常路径会原子更新三者保持一致；此处硬校验兜底，不一致即中断发布。
+          check_pin() {
+            local name="$1" dir="$2" file="$3" head base
+            head="$(git -C "$dir" rev-parse HEAD)"
+            base="$(tr -d '[:space:]' < "$file")"
+            if [ "$head" != "$base" ]; then
+              echo "::error::$name gitlink ($head) 与 $file ($base) 不一致——拒绝在未验证基线上出包。" >&2
+              exit 1
+            fi
+            echo "$name gitlink == $file：$head"
+          }
+          check_pin opencode opencode brand/BASE_SHA
+          check_pin infinite-canvas infinite-canvas brand/CANVAS_BASE_SHA
 
       - name: 预检补丁语法与清单
         shell: bash

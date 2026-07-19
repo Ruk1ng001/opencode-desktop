@@ -106,8 +106,32 @@ jobs:
           # 但不致命：apply 模式只要求 opencode/ 工作区干净 + 补丁精确适用；任一补丁失败即非 0
           # → 步骤失败 → 通知维护者手动介入。
           echo "按 NN 序重放补丁到 $LATEST："
-          scripts/apply-patches.sh
-          echo "全部补丁 apply 成功。"
+          if scripts/apply-patches.sh; then
+            echo "全部补丁 apply 成功。"
+          else
+            # strict 失败：上游 $LATEST 很可能改到了补丁热点文件（router/layout/server/vite 等）。
+            # 直接在当前 $LATEST 工作区逐补丁 3way 试应用，把冲突 hunk 落成 .rej 打印出来——
+            # 这诊断基于正确的新基线（BASE_SHA 此刻还是旧的，用 --check-3way 会基于旧基线不准），
+            # 让维护者一眼看到哪个补丁的哪些 hunk 撞上了上游改动，缩短 rebase 定位时间。
+            echo "::group::strict apply 失败——3way 漂移诊断（基于新基线 $LATEST）" >&2
+            git -C opencode reset --hard --quiet
+            git -C opencode clean -fdq
+            for p in brand/patches/*.patch; do
+              [ -e "$p" ] || continue
+              name="$(basename "$p")"
+              if git -C opencode apply --3way "$PWD/$p" >/dev/null 2>&1; then
+                echo "  3way OK   $name" >&2
+              else
+                echo "  3way 冲突 $name：" >&2
+                git -C opencode apply --3way --reject "$PWD/$p" 2>&1 | sed 's/^/      /' >&2 || true
+                find opencode -name '*.rej' -print 2>/dev/null | sed 's/^/      rej: /' >&2 || true
+              fi
+            done
+            git -C opencode reset --hard --quiet; git -C opencode clean -fdq
+            echo "::endgroup::" >&2
+            echo "补丁 strict apply 失败，需人工把补丁 rebase 到 $LATEST（见上方 3way 诊断）。" >&2
+            exit 1
+          fi
 
       - name: 安装依赖 + typecheck（app + desktop）
         if: steps.detect.outputs.need == 'true'
@@ -153,7 +177,21 @@ jobs:
 
           # 推 main（保存基线推进）。GITHUB_TOKEN 推送不会触发其它 workflow，
           # 故用 PAT checkout 后的凭据推送；真正触发出包的是下方推送的 dokng tag。
-          git push origin HEAD:main
+          # 加 pull --rebase + 重试：定时任务与手动触发 / 维护者推送可能并发，
+          # 裸 push 遇 non-fast-forward 会被拒。重试 3 次，每次先 rebase 再推。
+          pushed=false
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then
+              pushed=true
+              break
+            fi
+            echo "push main 第 $attempt 次失败（可能 non-fast-forward），rebase 后重试…" >&2
+            git fetch origin main --quiet || true
+            # rebase 到最新 origin/main；基线文件冲突极少（只有并发升级才可能），
+            # 冲突时放弃自动 rebase，让 job 失败等人工介入（不强推、不覆盖他人提交）。
+            git rebase origin/main || { git rebase --abort || true; break; }
+          done
+          [ "$pushed" = true ] || { echo "push main 连续 3 次失败，放弃（无污染，可重跑）。" >&2; exit 1; }
           echo "已推送 main。"
 
           # 计算下一个 dokng 版本 tag（vX.Y.Z-dokng.N，基于新基线 BASE_TAG），打 tag 并推送。

@@ -14,10 +14,10 @@ index 5592e2f4e..5bee17244 100644
    )
  }
 diff --git a/packages/app/src/components/cx-account/cx-account-dialog.tsx b/packages/app/src/components/cx-account/cx-account-dialog.tsx
-index 0073fb3cf..d12c6e72d 100644
+index 0073fb3cf..59124bd77 100644
 --- a/packages/app/src/components/cx-account/cx-account-dialog.tsx
 +++ b/packages/app/src/components/cx-account/cx-account-dialog.tsx
-@@ -44,6 +44,18 @@ import {
+@@ -44,6 +44,19 @@ import {
    type KeyProfileState,
    type ResolvedKey,
  } from "./cx-account-api"
@@ -28,6 +28,7 @@ index 0073fb3cf..d12c6e72d 100644
 +  canvasImageKeyId,
 +  canvasTextKeyId,
 +  canvasVideoKeyId,
++  pruneCanvasSlots,
 +  toggleCanvasAudioKey,
 +  toggleCanvasImageKey,
 +  toggleCanvasTextKey,
@@ -36,7 +37,7 @@ index 0073fb3cf..d12c6e72d 100644
  
  // [cx] US-008/US-009: 单条 key 列表项。按各自 key 独立展示 profile（loading/error/ready）；点击整行
  // 切换激活，选中态由背景与强调边框表达，操作区只保留编辑 label / 删除（builtin 条目不可管理）。
-@@ -54,6 +66,18 @@ function KeyCard(props: {
+@@ -54,6 +67,18 @@ function KeyCard(props: {
    onActivate: (entry: ResolvedKey) => void
    onSaveLabel: (id: string, label: string) => void
    onRemove: (id: string) => void
@@ -55,7 +56,7 @@ index 0073fb3cf..d12c6e72d 100644
  }) {
    const state = () => props.state ?? ({ status: "loading" } as KeyProfileState)
    const [editing, setEditing] = createSignal(false)
-@@ -197,6 +221,54 @@ function KeyCard(props: {
+@@ -197,6 +222,54 @@ function KeyCard(props: {
              </div>
            </Show>
          </div>
@@ -110,7 +111,7 @@ index 0073fb3cf..d12c6e72d 100644
        </header>
  
        <Switch>
-@@ -274,22 +346,42 @@ function KeyCard(props: {
+@@ -274,22 +347,42 @@ function KeyCard(props: {
          </Match>
        </Switch>
  
@@ -164,7 +165,7 @@ index 0073fb3cf..d12c6e72d 100644
              }
            >
              <TooltipV2 value="保存名称" placement="top">
-@@ -425,6 +517,8 @@ export function CxDialogAccount() {
+@@ -425,6 +518,8 @@ export function CxDialogAccount() {
    const [profiles, setProfiles] = createSignal<Record<string, KeyProfileState>>({})
    const [refreshingIds, setRefreshingIds] = createSignal<Set<string>>(new Set())
    const [switchingId, setSwitchingId] = createSignal<string | null>(null)
@@ -173,7 +174,16 @@ index 0073fb3cf..d12c6e72d 100644
    const [addingKey, setAddingKey] = createSignal(false)
    const [notice, setNotice] = createSignal("")
    const requestVersions = new Map<string, number>()
-@@ -632,6 +726,59 @@ export function CxDialogAccount() {
+@@ -495,6 +590,8 @@ export function CxDialogAccount() {
+     setProfiles((prev) => Object.fromEntries(Object.entries(prev).filter(([id]) => valid.has(id))))
+     // [cx] 同步清理已删 key 的缓存快照，避免缓存无限增长 / 下次误填已删 key 的旧数据。
+     pruneCachedProfiles(next.map((entry) => entry.id))
++    // [dokng] 同步收敛画布四槽位：删掉的 key 不再占槽（落盘），避免重启后画布拿到已不存在的 keyId。
++    pruneCanvasSlots(valid)
+     setInitializing(false)
+     if (options.loadMissing) {
+       for (const entry of next) {
+@@ -632,6 +729,59 @@ export function CxDialogAccount() {
      }
    }
  
@@ -233,7 +243,7 @@ index 0073fb3cf..d12c6e72d 100644
    return (
      <Dialog size="x-large" class="cx-account-dialog">
        <DialogHeader closeLabel="关闭">
-@@ -849,6 +996,16 @@ export function CxDialogAccount() {
+@@ -849,6 +999,16 @@ export function CxDialogAccount() {
                          onActivate={(e) => void handleActivate(e)}
                          onSaveLabel={(id, label) => void handleSaveLabel(id, label)}
                          onRemove={(id) => void handleRemove(id)}
@@ -378,10 +388,10 @@ index f073cd07f..79c158e3e 100644
  .cx-account-body [data-slot="cx-key-card"][data-active] [data-slot="cx-key-actions"] {
 diff --git a/packages/app/src/components/cx-account/cx-canvas-slots.ts b/packages/app/src/components/cx-account/cx-canvas-slots.ts
 new file mode 100644
-index 000000000..7fbd074c6
+index 000000000..c3b205a8b
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-canvas-slots.ts
-@@ -0,0 +1,210 @@
+@@ -0,0 +1,273 @@
 +// [dokng] 画布四槽位状态 + 投递 payload 合成（待办 4）。
 +//
 +// 账户面板每个 key 卡片有四个按钮，对应画布的四类模型能力：
@@ -425,37 +435,100 @@ index 000000000..7fbd074c6
 +}
 +
 +// ============================================================================
-+// 四槽位状态（模块级全局，跨组件共享）
++// 四槽位状态（模块级全局，跨组件共享，落 localStorage 跨重启保留）
 +// ============================================================================
 +
-+const [imageKeyId, setImageKeyId] = createSignal<string | null>(null)
-+const [videoKeyId, setVideoKeyId] = createSignal<string | null>(null)
-+const [textKeyId, setTextKeyId] = createSignal<string | null>(null)
-+const [audioKeyId, setAudioKeyId] = createSignal<string | null>(null)
++// [dokng] 四槽位选择必须持久化：否则重启后账户面板四个按钮的选中态全丢（回到 null），
++// 而画布侧 config 自身另存在画布的 localStorage 里仍在——两边状态源不一致，表现为
++// 「画布有渠道但账户里四个按钮没选上」。此处把四个槽位的 keyId 落到宿主 localStorage，
++// 初始化时读回，每次 toggle 后重写。降级风格同 cx-account-api 的 profile 缓存：
++// localStorage 不可用（SSR / 隐私模式 / 写满）时读返回空、写为 no-op，绝不抛出。
++const SLOTS_STORAGE_KEY = "cx-account:canvas-slots:v1"
++
++type CanvasSlotsFile = {
++  image: string | null
++  video: string | null
++  text: string | null
++  audio: string | null
++}
++
++function readSlotsFile(): CanvasSlotsFile {
++  const empty: CanvasSlotsFile = { image: null, video: null, text: null, audio: null }
++  try {
++    if (typeof localStorage === "undefined") return empty
++    const raw = localStorage.getItem(SLOTS_STORAGE_KEY)
++    if (!raw) return empty
++    const parsed = JSON.parse(raw) as unknown
++    if (!parsed || typeof parsed !== "object") return empty
++    const p = parsed as Record<string, unknown>
++    const pick = (v: unknown): string | null => (typeof v === "string" && v.length > 0 ? v : null)
++    return { image: pick(p.image), video: pick(p.video), text: pick(p.text), audio: pick(p.audio) }
++  } catch {
++    return empty
++  }
++}
++
++function persistSlots(): void {
++  try {
++    if (typeof localStorage === "undefined") return
++    const file: CanvasSlotsFile = {
++      image: imageKeyId(),
++      video: videoKeyId(),
++      text: textKeyId(),
++      audio: audioKeyId(),
++    }
++    localStorage.setItem(SLOTS_STORAGE_KEY, JSON.stringify(file))
++  } catch {
++    // localStorage 写满 / 隐私模式禁用 —— 静默降级，不影响槽位选择。
++  }
++}
++
++const initialSlots = readSlotsFile()
++
++const [imageKeyId, setImageKeyId] = createSignal<string | null>(initialSlots.image)
++const [videoKeyId, setVideoKeyId] = createSignal<string | null>(initialSlots.video)
++const [textKeyId, setTextKeyId] = createSignal<string | null>(initialSlots.text)
++const [audioKeyId, setAudioKeyId] = createSignal<string | null>(initialSlots.audio)
 +
 +export const canvasImageKeyId = imageKeyId
 +export const canvasVideoKeyId = videoKeyId
 +export const canvasTextKeyId = textKeyId
 +export const canvasAudioKeyId = audioKeyId
 +
-+// 点「生图」：切到该 key（再点同一个则取消，生图槽清空）。
++// 点「生图」：切到该 key（再点同一个则取消，生图槽清空）。落盘。
 +export function toggleCanvasImageKey(id: string) {
 +  setImageKeyId((prev) => (prev === id ? null : id))
++  persistSlots()
 +}
 +
-+// 点「视频」：切到该 key（再点同一个则取消，视频槽清空）。
++// 点「视频」：切到该 key（再点同一个则取消，视频槽清空）。落盘。
 +export function toggleCanvasVideoKey(id: string) {
 +  setVideoKeyId((prev) => (prev === id ? null : id))
++  persistSlots()
 +}
 +
-+// 点「文本」：切到该 key（再点同一个则取消，文本槽清空）。
++// 点「文本」：切到该 key（再点同一个则取消，文本槽清空）。落盘。
 +export function toggleCanvasTextKey(id: string) {
 +  setTextKeyId((prev) => (prev === id ? null : id))
++  persistSlots()
 +}
 +
-+// 点「音频」：切到该 key（再点同一个则取消，音频槽清空）。
++// 点「音频」：切到该 key（再点同一个则取消，音频槽清空）。落盘。
 +export function toggleCanvasAudioKey(id: string) {
 +  setAudioKeyId((prev) => (prev === id ? null : id))
++  persistSlots()
++}
++
++// [dokng] key 被删除时清理其占用的所有槽位——否则删掉的 key 仍留在 localStorage 里，
++// 重启后画布会拿到一个已不存在的 keyId，合成 payload 时 byId 查不到而静默丢弃，
++// 但账户面板按钮也无从取消（卡片已没了）。删除 key 后由账户面板调用此函数收敛。
++export function pruneCanvasSlots(validIds: Set<string>) {
++  const drop = (v: string | null) => (v !== null && !validIds.has(v) ? null : v)
++  setImageKeyId((prev) => drop(prev))
++  setVideoKeyId((prev) => drop(prev))
++  setTextKeyId((prev) => drop(prev))
++  setAudioKeyId((prev) => drop(prev))
++  persistSlots()
 +}
 +
 +// 是否已选中任一槽位（决定「画布」入口是否可直接进入并投递有效渠道）。
