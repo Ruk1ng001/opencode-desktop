@@ -18,3 +18,9 @@ web/src/stores/use-config-store.ts
 web/src/components/layout/user-status-actions.tsx
 web/src/pages/home/index.tsx
 web/src/services/api/prompts.ts
+
+# 提示词详情弹窗渲染 preview 里的示例图：
+# - 上游 v0.9.0 用 <pre> 原样直出 preview，导致 ![](url) 退化成裸 markdown 文本、图片不渲染；
+# - 改为零依赖轻量解析，把 markdown 图片抽成真正的 <img>（可点开原图），其余说明文字保留。
+[03-prompt-preview-render]
+web/src/pages/prompts/components/prompt-detail-dialog.tsx
