@@ -229,7 +229,7 @@ jobs:
               echo "::error::$name gitlink ($head) 与 $file ($base) 不一致——拒绝在未验证基线上出包。" >&2
               exit 1
             fi
-            echo "$name gitlink == $file：$head"
+            echo "$name gitlink == ${file}：$head"
           }
           check_pin opencode opencode brand/BASE_SHA
           check_pin infinite-canvas infinite-canvas brand/CANVAS_BASE_SHA
@@ -379,7 +379,7 @@ jobs:
           TAG: ${{ needs.detect.outputs.tag }}
         run: |
           BASE_TAG="$(tr -d '[:space:]' < brand/BASE_TAG)"
-          NOTES="基于 opencode $BASE_TAG 的 dokng 定制发布（$TAG）。三平台安装包：.dmg / .exe / .AppImage。"
+          NOTES="基于 opencode $BASE_TAG 的 dokng 定制发布（${TAG}）。三平台安装包：.dmg / .exe / .AppImage。"
           # blockmap 供 electron-updater 差量更新；一并上传（缺失则全量下载，非阻断）。
           find /tmp/latest-yml -name '*.blockmap' -exec cp {} /tmp/artifacts/ \; 2>/dev/null || true
           # --latest：始终标记为最新（tag 带 -dokng.N 会被 GitHub 判为 prerelease、默认不标 Latest；
@@ -389,7 +389,7 @@ jobs:
             gh release upload "$TAG" /tmp/artifacts/* --clobber
             gh release edit "$TAG" --latest
           else
-            echo "创建 release $TAG。"
+            echo "创建 release ${TAG}。"
             gh release create "$TAG" \
               --title "$TAG" \
               --notes "$NOTES" \
@@ -407,7 +407,7 @@ jobs:
         run: |
           # finalize-latest-yml.ts：把 mac 双架构 latest-mac.yml 合并成单个（含两架构 files），
           # win/linux 透传，再 gh release upload 到当前 tag（脚本内用 v${OPENCODE_VERSION} 拼 tag）。
-          # 脚本把合并后的 yml 写到 $RUNNER_TEMP（供下一步 R2 双写取用），同时上传到 GitHub Release。
+          # 脚本把合并后的 yml 写到 ${RUNNER_TEMP}（供下一步 R2 双写取用），同时上传到 GitHub Release。
           # OPENCODE_VERSION 需不带 v；detect 输出带 v，这里剥掉。
           export OPENCODE_VERSION="${OPENCODE_VERSION#v}"
           bun opencode/packages/desktop/scripts/finalize-latest-yml.ts
@@ -438,7 +438,7 @@ jobs:
           endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
 
           # staging：安装包 + blockmap（release 步骤已 cp 到 /tmp/artifacts）+ 合并后的
-          # latest*.yml（finalize 步骤写到 $RUNNER_TEMP）。合并 yml 覆盖 staging 里的同名文件，
+          # latest*.yml（finalize 步骤写到 ${RUNNER_TEMP}）。合并 yml 覆盖 staging 里的同名文件，
           # 确保 R2 上是合并后的单文件（含双架构 files），而非各架构分片。
           mkdir -p /tmp/r2
           cp -f /tmp/artifacts/* /tmp/r2/ 2>/dev/null || true

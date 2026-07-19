@@ -94,7 +94,7 @@ main() {
   esac
 
   [ -d "$SRC_DIR/.git" ] || [ -f "$SRC_DIR/.git" ] \
-    || die "找不到已初始化的 submodule：$SRC_DIR（先 git submodule update --init）。"
+    || die "找不到已初始化的 submodule：${SRC_DIR}（先 git submodule update --init）。"
   [ -f "$BASE_TAG_FILE" ] || die "找不到基线文件：$BASE_TAG_FILE"
   [ -f "$BASE_SHA_FILE" ] || die "找不到基线文件：$BASE_SHA_FILE"
 
@@ -119,17 +119,17 @@ main() {
   local target_tag
   if [ "$explicit" -eq 1 ]; then
     target_tag="$requested_tag"
-    log "指定目标 tag：$target_tag（当前基线 $orig_tag）"
+    log "指定目标 tag：${target_tag}（当前基线 ${orig_tag}）"
   else
     log "查询上游最新稳定 release tag：$url"
     target_tag="$(latest_stable_tag "$url")"
     [ -n "$target_tag" ] || die "查询上游最新稳定 tag 失败（网络不可达或无匹配 tag）。"
-    log "上游最新稳定 release：$target_tag（当前基线 $orig_tag）"
+    log "上游最新稳定 release：${target_tag}（当前基线 ${orig_tag}）"
   fi
 
   # —— 幂等短路 ——
   if [ "$target_tag" = "$orig_tag" ] && [ "$explicit" -eq 0 ]; then
-    log "已是最新版本 $orig_tag，无需更新。"
+    log "已是最新版本 ${orig_tag}，无需更新。"
     printf '版本对比：%s → %s（无变化）\n' "$orig_tag" "$orig_tag"
     exit 0
   fi
@@ -149,7 +149,7 @@ main() {
     git -C "$PROJECT_ROOT" add infinite-canvas >/dev/null 2>&1 || true
   }
 
-  log "拉取并切换 infinite-canvas/ 到 $target_tag（$target_sha）"
+  log "拉取并切换 infinite-canvas/ 到 ${target_tag}（${target_sha}）"
   git -C "$SRC_DIR" fetch --force "$url" \
     "refs/tags/${target_tag}:refs/tags/${target_tag}" >/dev/null 2>&1 \
     || { err "从上游拉取 tag $target_tag 失败：$url"; exit 1; }
@@ -181,7 +181,7 @@ main() {
     printf '版本对比：%s → %s\n' "$orig_tag" "$target_tag"
   fi
   printf '  SHA：%s → %s\n' "$orig_sha" "$new_sha"
-  log "infinite-canvas/ 已切到 $target_tag，gitlink 已暂存。"
+  log "infinite-canvas/ 已切到 ${target_tag}，gitlink 已暂存。"
   log "请在构建发布前重放画布补丁：scripts/apply-canvas-patches.sh --check（验证）。"
   log "确认无误后提交：git commit brand/CANVAS_BASE_TAG brand/CANVAS_BASE_SHA infinite-canvas"
 }

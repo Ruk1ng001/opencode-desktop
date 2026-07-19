@@ -20,7 +20,7 @@
 #   - stdout：只打「一个字段的纯值」一行（默认 tag，即最终版本 tag）。这样
 #     `NEWTAG="$(next-dokng-version.sh)"` 天然拿到干净的 tag，无需调用方再 sed/awk 抽取。
 #     用 --field <base|n|version|tag> 选别的字段（如 --field version 取不带用途区分的版本串）。
-#   - $GITHUB_OUTPUT（若设置）：照旧写全部 KEY=VALUE 四行（base=/n=/version=/tag=），
+#   - ${GITHUB_OUTPUT}（若设置）：照旧写全部 KEY=VALUE 四行（base=/n=/version=/tag=），
 #     供 GitHub Actions 用 steps.<id>.outputs.<key> 消费（release.yml 依赖此路径）。
 #
 # 历史坑（勿回退）：早期 stdout 也打四行 KEY=VALUE，导致 auto-upgrade.yml 里

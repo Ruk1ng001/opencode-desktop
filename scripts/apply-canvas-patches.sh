@@ -107,14 +107,14 @@ run_check_mode() {
   base_sha="$(read_base_sha)"
   [ -n "$base_sha" ] || die "读取基线 SHA 失败：$BASE_SHA_FILE"
   git -C "$SRC_DIR" cat-file -e "${base_sha}^{commit}" 2>/dev/null \
-    || die "infinite-canvas/ 内找不到基线 commit $base_sha（先 git submodule update --init）。"
+    || die "infinite-canvas/ 内找不到基线 commit ${base_sha}（先 git submodule update --init）。"
   CHECK_WT="$(mktemp -d "${TMPDIR:-/tmp}/canvas-apply-check.XXXXXX")"
   git -C "$SRC_DIR" worktree add --detach "$CHECK_WT" "$base_sha" >/dev/null 2>&1 \
-    || die "创建临时 worktree 失败（基线 $base_sha）。"
+    || die "创建临时 worktree 失败（基线 ${base_sha}）。"
   if [ "$mode" = strict ]; then
-    label="check(strict)"; log "$label：从基线 $base_sha 按序 strict 重放（与 Release/CI 一致，不碰当前工作区）"
+    label="check(strict)"; log "${label}：从基线 $base_sha 按序 strict 重放（与 Release/CI 一致，不碰当前工作区）"
   else
-    label="check(3way)"; warn "$label：仅诊断上游漂移；成功不代表 Release/CI strict apply 可通过。"
+    label="check(3way)"; warn "${label}：仅诊断上游漂移；成功不代表 Release/CI strict apply 可通过。"
   fi
   while IFS= read -r patch; do
     [ -n "$patch" ] || continue
@@ -162,7 +162,7 @@ run_apply() {
       log "应用 $name"
     else
       err "应用 $name 失败："; git -C "$SRC_DIR" apply "$patch" 2>&1 | sed 's/^/        /' >&2 || true
-      die "重放中断于 $name（前序补丁已落地，可 checkout -f 回退）。"
+      die "重放中断于 ${name}（前序补丁已落地，可 checkout -f 回退）。"
     fi
   done < <(list_patches)
   [ "$total" -gt 0 ] || { warn "$PATCHES_DIR 下没有 .patch，无补丁可应用。"; return 0; }
@@ -177,7 +177,7 @@ main() {
     --check) mode=check;;
     --check-3way) mode=check-3way;;
     "") mode=apply;;
-    *) die "未知参数：$1（用 -h 查看用法）。";;
+    *) die "未知参数：${1}（用 -h 查看用法）。";;
   esac
   [ -d "$SRC_DIR/.git" ] || [ -f "$SRC_DIR/.git" ] || die "找不到已初始化的 submodule：$SRC_DIR"
   [ -d "$PATCHES_DIR" ] || die "找不到补丁目录：$PATCHES_DIR"

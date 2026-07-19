@@ -105,7 +105,7 @@ jobs:
           # 此刻 brand/BASE_SHA 还是旧基线（升级成功后才刷新），脚本会 warn HEAD≠BASE_SHA，
           # 但不致命：apply 模式只要求 opencode/ 工作区干净 + 补丁精确适用；任一补丁失败即非 0
           # → 步骤失败 → 通知维护者手动介入。
-          echo "按 NN 序重放补丁到 $LATEST："
+          echo "按 NN 序重放补丁到 ${LATEST}："
           if scripts/apply-patches.sh; then
             echo "全部补丁 apply 成功。"
           else
@@ -113,7 +113,7 @@ jobs:
             # 直接在当前 $LATEST 工作区逐补丁 3way 试应用，把冲突 hunk 落成 .rej 打印出来——
             # 这诊断基于正确的新基线（BASE_SHA 此刻还是旧的，用 --check-3way 会基于旧基线不准），
             # 让维护者一眼看到哪个补丁的哪些 hunk 撞上了上游改动，缩短 rebase 定位时间。
-            echo "::group::strict apply 失败——3way 漂移诊断（基于新基线 $LATEST）" >&2
+            echo "::group::strict apply 失败——3way 漂移诊断（基于新基线 ${LATEST}）" >&2
             git -C opencode reset --hard --quiet
             git -C opencode clean -fdq
             for p in brand/patches/*.patch; do
@@ -122,14 +122,14 @@ jobs:
               if git -C opencode apply --3way "$PWD/$p" >/dev/null 2>&1; then
                 echo "  3way OK   $name" >&2
               else
-                echo "  3way 冲突 $name：" >&2
+                echo "  3way 冲突 ${name}：" >&2
                 git -C opencode apply --3way --reject "$PWD/$p" 2>&1 | sed 's/^/      /' >&2 || true
                 find opencode -name '*.rej' -print 2>/dev/null | sed 's/^/      rej: /' >&2 || true
               fi
             done
             git -C opencode reset --hard --quiet; git -C opencode clean -fdq
             echo "::endgroup::" >&2
-            echo "补丁 strict apply 失败，需人工把补丁 rebase 到 $LATEST（见上方 3way 诊断）。" >&2
+            echo "补丁 strict apply 失败，需人工把补丁 rebase 到 ${LATEST}（见上方 3way 诊断）。" >&2
             exit 1
           fi
 
@@ -164,7 +164,7 @@ jobs:
           git -C opencode clean -fdq
 
           NEWSHA="$(git -C opencode rev-parse HEAD)"
-          echo "新基线：$LATEST（$NEWSHA）"
+          echo "新基线：${LATEST}（${NEWSHA}）"
 
           # 更新基线双文件（保留尾换行，与既有格式一致）。
           printf '%s\n' "$LATEST" > brand/BASE_TAG
@@ -204,4 +204,4 @@ jobs:
           echo "新 dokng 版本 tag：$NEWTAG"
           git tag "$NEWTAG"
           git push origin "$NEWTAG"
-          echo "已推送 tag $NEWTAG，release.yml 将据此自动出包。"
+          echo "已推送 tag ${NEWTAG}，release.yml 将据此自动出包。"

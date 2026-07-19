@@ -108,11 +108,11 @@ jobs:
           # 用统一的画布重放脚本（strict apply）落地补丁。此刻 CANVAS_BASE_SHA 还是旧基线，
           # 脚本会 warn HEAD≠BASE_SHA，但不致命：apply 模式只要求工作区干净 + 补丁精确适用；
           # 任一补丁失败即非 0 → 步骤失败 → 通知维护者手动介入（上游漂移需人工修补丁）。
-          echo "按 NN 序重放画布补丁到 $LATEST："
+          echo "按 NN 序重放画布补丁到 ${LATEST}："
           if ! scripts/apply-canvas-patches.sh; then
             echo "::error::画布补丁 strict apply 失败（上游 $LATEST 漂移）。以下为 3way 诊断，列出冲突 hunk：" >&2
             # strict 失败后工作区可能已落地部分补丁，先恢复干净再逐补丁 3way 试应用，
-            # 定位真正冲突的 patch/hunk（.rej）。诊断基于正确的新基线（当前已 checkout 到 $LATEST）。
+            # 定位真正冲突的 patch/hunk（.rej）。诊断基于正确的新基线（当前已 checkout 到 ${LATEST}）。
             git -C infinite-canvas reset --hard --quiet
             git -C infinite-canvas clean -fdq
             for p in $(find brand/canvas-patches -maxdepth 1 -name '*.patch' | LC_ALL=C sort); do
@@ -123,7 +123,7 @@ jobs:
                 git -C infinite-canvas apply --3way "$PWD/$p" 2>&1 | sed 's/^/          /' >&2 || true
               fi
             done
-            echo "::error::请本地 rebase 画布补丁到 $LATEST（检查点 worktree + export-patch.sh 重导出），再更新 CANVAS_BASE_SHA/TAG。" >&2
+            echo "::error::请本地 rebase 画布补丁到 ${LATEST}（检查点 worktree + export-patch.sh 重导出），再更新 CANVAS_BASE_SHA/TAG。" >&2
             exit 1
           fi
           echo "全部画布补丁 apply 成功。"
@@ -162,7 +162,7 @@ jobs:
           git -C infinite-canvas clean -fdq
 
           NEWSHA="$(git -C infinite-canvas rev-parse HEAD)"
-          echo "新画布基线：$LATEST（$NEWSHA）"
+          echo "新画布基线：${LATEST}（${NEWSHA}）"
 
           # 更新基线双文件（保留尾换行，与既有格式一致）。
           printf '%s\n' "$LATEST" > brand/CANVAS_BASE_TAG
@@ -188,4 +188,4 @@ jobs:
             git rebase origin/main || { git rebase --abort || true; break; }
           done
           [ "$pushed" = true ] || { echo "push main 连续 3 次失败，放弃（无污染，可重跑）。" >&2; exit 1; }
-          echo "已推送 main（画布基线 → $LATEST）。未推 tag：画布随下次 opencode 发版一起出包。"
+          echo "已推送 main（画布基线 → ${LATEST}）。未推 tag：画布随下次 opencode 发版一起出包。"

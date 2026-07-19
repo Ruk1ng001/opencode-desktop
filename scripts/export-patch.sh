@@ -30,7 +30,7 @@ esac
 target="$1"
 name="$2"
 shift 2
-[[ "$name" =~ ^[0-9][0-9]-[A-Za-z0-9._-]+$ ]] || die "非法补丁名：$name（须为 NN-name）。"
+[[ "$name" =~ ^[0-9][0-9]-[A-Za-z0-9._-]+$ ]] || die "非法补丁名：${name}（须为 NN-name）。"
 
 case "$target" in
   opencode)
@@ -45,7 +45,7 @@ case "$target" in
     manifest="$PROJECT_ROOT/brand/canvas-patches.manifest"
     check_script="$PROJECT_ROOT/scripts/apply-canvas-patches.sh"
     ;;
-  *) die "未知 target：$target（仅支持 opencode|canvas）。";;
+  *) die "未知 target：${target}（仅支持 opencode|canvas）。";;
 esac
 
 base_worktree=""
@@ -72,7 +72,7 @@ worktree_common="$(cd "$base_worktree" && cd "$worktree_common" && pwd)"
 [ "$source_common" = "$worktree_common" ] || die "--base-worktree 不属于 $target submodule。"
 
 section="[$name]"
-grep -Fxq "$section" "$manifest" || die "manifest 缺少 $section：$manifest"
+grep -Fxq "$section" "$manifest" || die "manifest 缺少 ${section}：$manifest"
 
 # 防止绝对路径、上跳路径和不存在于 worktree 的路径。
 files=()
@@ -81,7 +81,7 @@ for file in "$@"; do
     /*|../*|*/../*|..|*\\*) die "非法相对路径：$file";;
   esac
   [ -e "$base_worktree/$file" ] || [ -L "$base_worktree/$file" ] \
-    || die "worktree 中不存在：$file（删除文件请先用 git rm 并由维护者单独导出）。"
+    || die "worktree 中不存在：${file}（删除文件请先用 git rm 并由维护者单独导出）。"
   files+=("$file")
 done
 
