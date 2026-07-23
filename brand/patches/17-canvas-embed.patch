@@ -1,8 +1,8 @@
 diff --git a/packages/app/src/app.tsx b/packages/app/src/app.tsx
-index 5592e2f4e..5bee17244 100644
+index b4496ba7de..4050a82759 100644
 --- a/packages/app/src/app.tsx
 +++ b/packages/app/src/app.tsx
-@@ -598,6 +598,10 @@ function Routes(props: { serverScoped?: JSX.Element }) {
+@@ -608,6 +608,10 @@ function Routes(props: { serverScoped?: JSX.Element }) {
          <Route path="/server/:serverKey/session/:id" component={TargetSessionRoute} />
        </Show>
        <Route path="/new-session" component={DraftRoute} />
@@ -14,7 +14,7 @@ index 5592e2f4e..5bee17244 100644
    )
  }
 diff --git a/packages/app/src/components/cx-account/cx-account-dialog.tsx b/packages/app/src/components/cx-account/cx-account-dialog.tsx
-index 0073fb3cf..59124bd77 100644
+index 0073fb3cf1..59124bd771 100644
 --- a/packages/app/src/components/cx-account/cx-account-dialog.tsx
 +++ b/packages/app/src/components/cx-account/cx-account-dialog.tsx
 @@ -44,6 +44,19 @@ import {
@@ -261,7 +261,7 @@ index 0073fb3cf..59124bd77 100644
                      )}
                    </For>
 diff --git a/packages/app/src/components/cx-account/cx-account-launcher.tsx b/packages/app/src/components/cx-account/cx-account-launcher.tsx
-index 2c55b052a..28b21f853 100644
+index 2c55b052ae..28b21f853f 100644
 --- a/packages/app/src/components/cx-account/cx-account-launcher.tsx
 +++ b/packages/app/src/components/cx-account/cx-account-launcher.tsx
 @@ -18,6 +18,7 @@
@@ -331,7 +331,7 @@ index 2c55b052a..28b21f853 100644
        )}
      </Show>
 diff --git a/packages/app/src/components/cx-account/cx-account.css b/packages/app/src/components/cx-account/cx-account.css
-index f073cd07f..79c158e3e 100644
+index f073cd07f1..79c158e3e9 100644
 --- a/packages/app/src/components/cx-account/cx-account.css
 +++ b/packages/app/src/components/cx-account/cx-account.css
 @@ -432,6 +432,26 @@
@@ -388,7 +388,7 @@ index f073cd07f..79c158e3e 100644
  .cx-account-body [data-slot="cx-key-card"][data-active] [data-slot="cx-key-actions"] {
 diff --git a/packages/app/src/components/cx-account/cx-canvas-slots.ts b/packages/app/src/components/cx-account/cx-canvas-slots.ts
 new file mode 100644
-index 000000000..c3b205a8b
+index 0000000000..c3b205a8b0
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-canvas-slots.ts
 @@ -0,0 +1,273 @@
@@ -667,7 +667,7 @@ index 000000000..c3b205a8b
 +}
 diff --git a/packages/app/src/pages/canvas-embed.tsx b/packages/app/src/pages/canvas-embed.tsx
 new file mode 100644
-index 000000000..05f6175b2
+index 0000000000..05f6175b26
 --- /dev/null
 +++ b/packages/app/src/pages/canvas-embed.tsx
 @@ -0,0 +1,167 @@
@@ -839,10 +839,10 @@ index 000000000..05f6175b2
 +  )
 +}
 diff --git a/packages/app/src/pages/layout-new.tsx b/packages/app/src/pages/layout-new.tsx
-index 0bf546343..44a4f1f76 100644
+index 3e0f98f5e3..e9c8281e52 100644
 --- a/packages/app/src/pages/layout-new.tsx
 +++ b/packages/app/src/pages/layout-new.tsx
-@@ -8,6 +8,10 @@ import { setNavigate } from "@/utils/notification-click"
+@@ -9,6 +9,10 @@ import { setNavigate } from "@/utils/notification-click"
  import { setV2Toast, ToastRegion } from "@/utils/toast"
  // [cx] 新布局账户面板接线（标题栏账户按钮 + dokng:// 深链 + 首启无 key 引导）。见 07 补丁。
  import { CxAccountLauncher } from "@/components/cx-account/cx-account-launcher"
@@ -853,8 +853,8 @@ index 0bf546343..44a4f1f76 100644
  
  export default function NewLayout(props: ParentProps) {
    const platform = usePlatform()
-@@ -37,8 +41,13 @@ export default function NewLayout(props: ParentProps) {
-       <Titlebar update={update} />
+@@ -46,8 +50,13 @@ export default function NewLayout(props: ParentProps) {
+       />
        {/* [cx] 账户入口 + dokng:// 深链 + 首启引导（组件内部自判 desktop，非 desktop 渲染 null）。 */}
        <CxAccountLauncher />
 -      <main class="flex-1 min-h-0 min-w-0 overflow-x-hidden flex flex-col items-start contain-strict">
@@ -866,10 +866,10 @@ index 0bf546343..44a4f1f76 100644
 +            不卸载，iframe 与画布状态跨路由保留。仅 desktop 实际渲染。 */}
 +        <CanvasHost />
        </main>
-       {import.meta.env.DEV && <DebugBar inline />}
+       {import.meta.env.DEV && state.debugTools && <DebugBar inline />}
        <TabsInfoPopup />
 diff --git a/packages/desktop/electron.vite.config.ts b/packages/desktop/electron.vite.config.ts
-index 534522681..cb70a81d9 100644
+index 534522681a..cb70a81d91 100644
 --- a/packages/desktop/electron.vite.config.ts
 +++ b/packages/desktop/electron.vite.config.ts
 @@ -131,7 +131,32 @@ const require = __cjs_mod__.createRequire(import.meta.url);
@@ -908,7 +908,7 @@ index 534522681..cb70a81d9 100644
      build: {
 diff --git a/packages/desktop/scripts/build-canvas.ts b/packages/desktop/scripts/build-canvas.ts
 new file mode 100644
-index 000000000..33477fbfa
+index 0000000000..33477fbfaf
 --- /dev/null
 +++ b/packages/desktop/scripts/build-canvas.ts
 @@ -0,0 +1,35 @@
@@ -948,7 +948,7 @@ index 000000000..33477fbfa
 +
 +console.log("[dokng] 画布产物构建完成：infinite-canvas/web/dist/")
 diff --git a/packages/desktop/scripts/prebuild.ts b/packages/desktop/scripts/prebuild.ts
-index 79b0e30af..3485a84fd 100644
+index 79b0e30afc..3485a84fde 100644
 --- a/packages/desktop/scripts/prebuild.ts
 +++ b/packages/desktop/scripts/prebuild.ts
 @@ -8,3 +8,7 @@ await $`bun ./scripts/copy-icons.ts ${channel}`
@@ -960,7 +960,7 @@ index 79b0e30af..3485a84fd 100644
 +// 产出 web/dist/，供 electron.vite 的 dokng:copy-canvas 钩子拷进 out/renderer/canvas/。
 +await $`bun ./scripts/build-canvas.ts`
 diff --git a/packages/ui/src/v2/components/icon.tsx b/packages/ui/src/v2/components/icon.tsx
-index b22d3140f..6501f1603 100644
+index b22d3140fe..6501f16030 100644
 --- a/packages/ui/src/v2/components/icon.tsx
 +++ b/packages/ui/src/v2/components/icon.tsx
 @@ -149,6 +149,27 @@ const icons = {

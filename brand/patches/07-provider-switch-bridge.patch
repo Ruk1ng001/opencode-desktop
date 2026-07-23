@@ -1,6 +1,6 @@
 diff --git a/packages/app/src/components/cx-account/cx-account-launcher.tsx b/packages/app/src/components/cx-account/cx-account-launcher.tsx
 new file mode 100644
-index 000000000..548de7fb7
+index 0000000000..2c55b052ae
 --- /dev/null
 +++ b/packages/app/src/components/cx-account/cx-account-launcher.tsx
 @@ -0,0 +1,100 @@
@@ -105,7 +105,7 @@ index 000000000..548de7fb7
 +  )
 +}
 diff --git a/packages/app/src/pages/directory-layout.tsx b/packages/app/src/pages/directory-layout.tsx
-index 77c120e57..eff51d9cf 100644
+index 77c120e57b..eff51d9cf2 100644
 --- a/packages/app/src/pages/directory-layout.tsx
 +++ b/packages/app/src/pages/directory-layout.tsx
 @@ -4,7 +4,7 @@ import { base64Encode } from "@opencode-ai/core/util/encode"
@@ -158,10 +158,10 @@ index 77c120e57..eff51d9cf 100644
  export type ProjectDirString = Schema.Schema.Type<typeof ProjectDirString>
  
 diff --git a/packages/app/src/pages/layout-new.tsx b/packages/app/src/pages/layout-new.tsx
-index 095d1ebd7..b9622a0a0 100644
+index c6fed8f6d5..3e0f98f5e3 100644
 --- a/packages/app/src/pages/layout-new.tsx
 +++ b/packages/app/src/pages/layout-new.tsx
-@@ -6,6 +6,8 @@ import { Titlebar, type TitlebarUpdate } from "@/components/titlebar"
+@@ -7,6 +7,8 @@ import { Titlebar, type TitlebarUpdate } from "@/components/titlebar"
  import { usePlatform } from "@/context/platform"
  import { setNavigate } from "@/utils/notification-click"
  import { setV2Toast, ToastRegion } from "@/utils/toast"
@@ -170,20 +170,20 @@ index 095d1ebd7..b9622a0a0 100644
  
  export default function NewLayout(props: ParentProps) {
    const platform = usePlatform()
-@@ -33,6 +35,8 @@ export default function NewLayout(props: ParentProps) {
-       }}
-     >
-       <Titlebar update={update} />
+@@ -42,6 +44,8 @@ export default function NewLayout(props: ParentProps) {
+             : undefined
+         }
+       />
 +      {/* [cx] 账户入口 + dokng:// 深链 + 首启引导（组件内部自判 desktop，非 desktop 渲染 null）。 */}
 +      <CxAccountLauncher />
        <main class="flex-1 min-h-0 min-w-0 overflow-x-hidden flex flex-col items-start contain-strict">
          <Suspense>{props.children}</Suspense>
        </main>
 diff --git a/packages/app/src/pages/layout.tsx b/packages/app/src/pages/layout.tsx
-index 8762d2f88..e2dc62231 100644
+index 812a479b20..2bedbe6516 100644
 --- a/packages/app/src/pages/layout.tsx
 +++ b/packages/app/src/pages/layout.tsx
-@@ -1256,6 +1256,22 @@ export default function LegacyLayout(props: ParentProps) {
+@@ -1257,6 +1257,22 @@ export default function LegacyLayout(props: ParentProps) {
    }
  
    const handleDeepLinks = (urls: string[]) => {
@@ -206,7 +206,7 @@ index 8762d2f88..e2dc62231 100644
      if (!server.isLocal()) return
  
      for (const directory of collectOpenProjectDeepLinks(urls)) {
-@@ -1285,6 +1301,20 @@ export default function LegacyLayout(props: ParentProps) {
+@@ -1286,6 +1302,20 @@ export default function LegacyLayout(props: ParentProps) {
  
      handleDeepLinks(drainPendingDeepLinks(window))
      makeEventListener(window, deepLinkEvent, handler as EventListener)
@@ -227,7 +227,7 @@ index 8762d2f88..e2dc62231 100644
    })
  
    async function renameProject(project: LocalProject, next: string) {
-@@ -2238,7 +2268,31 @@ export default function LegacyLayout(props: ParentProps) {
+@@ -2239,7 +2269,31 @@ export default function LegacyLayout(props: ParentProps) {
        settingsKeybind={() => command.keybind("settings.open")}
        onOpenSettings={openSettings}
        helpLabel={() => language.t("sidebar.help")}
@@ -261,7 +261,7 @@ index 8762d2f88..e2dc62231 100644
          mobile ? <SidebarPanel project={currentProject} mobile /> : <SidebarPanel project={currentProject} merged />
        }
 diff --git a/packages/app/src/pages/layout/sidebar-shell.tsx b/packages/app/src/pages/layout/sidebar-shell.tsx
-index ca36af2a4..6a83602f3 100644
+index ca36af2a42..6a83602f3e 100644
 --- a/packages/app/src/pages/layout/sidebar-shell.tsx
 +++ b/packages/app/src/pages/layout/sidebar-shell.tsx
 @@ -30,6 +30,8 @@ export const SidebarContent = (props: {
