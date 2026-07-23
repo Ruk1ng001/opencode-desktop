@@ -136,7 +136,7 @@ infinite-canvas 作为 submodule，源码零手改，定制走它自己的补丁
 - **`.gitmodules`** 加第二个 submodule 条目（path=`infinite-canvas`，url=`https://github.com/basketikun/infinite-canvas.git`）。注意：当前 `infinite-canvas/` 是内嵌独立 git 仓库、且 `.gitignore` 未忽略它，需先决定「转为正式 submodule」还是沿用独立仓库模式。
 - **`scripts/update-canvas.sh`**：复制 `scripts/update.sh`，只换上游 URL、BASE 文件（如 `brand/CANVAS_BASE_TAG` / `CANVAS_BASE_SHA`）、验证命令（`typecheck` → `cd web && bun install && bun run build`）。tag 筛选正则 `^v[0-9]+\.[0-9]+\.[0-9]+$` 不变——天然排除上游历史里的脏 tag `v.0.1.0`（多一个点）。
 - **`scripts/apply-canvas-patches.sh`**：复制 `scripts/apply-patches.sh`，指向画布补丁层目录。
-- **`.github/workflows/auto-upgrade-canvas.yml`**：复制 `auto-upgrade.yml`，cron 与 opencode 那条错开，验证步骤换成画布 build。**注意**：`web/vite.config.ts` 构建期 `readFileSync` 读的是 **`infinite-canvas/VERSION` 与 `infinite-canvas/CHANGELOG.md`**（`web/../`，即画布仓库根，**不是 open-code 仓库根**），注入到 `__AP_VERSION__`/`__APP_RELEASES__`；且**无 try/catch**，缺任一文件 build 直接失败。内嵌打包（待办 4 的构建步骤）与 CI 都必须保证这两个文件随 `infinite-canvas/` 在位。
+- **画布升级 CI**（原计划独立 `auto-upgrade-canvas.yml`，**现已合并进 `.github/workflows/release.yml` 的 `upgrade-canvas` job**——三条链路收敛为单文件，见该文件头说明）：cron 与 opencode 那条错开，验证步骤换成画布 build。**注意**：`web/vite.config.ts` 构建期 `readFileSync` 读的是 **`infinite-canvas/VERSION` 与 `infinite-canvas/CHANGELOG.md`**（`web/../`，即画布仓库根，**不是 open-code 仓库根**），注入到 `__AP_VERSION__`/`__APP_RELEASES__`；且**无 try/catch**，缺任一文件 build 直接失败。内嵌打包（待办 4 的构建步骤）与 CI 都必须保证这两个文件随 `infinite-canvas/` 在位。
 - **注意**：infinite-canvas 自带 `.github/workflows/*`（docker / pages / publish 等），作为 submodule 时父仓库 CI 不会执行它们，但要确认不污染父仓库工作区与发布流程。
 
 ---

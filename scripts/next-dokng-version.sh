@@ -23,7 +23,7 @@
 #   - ${GITHUB_OUTPUT}（若设置）：照旧写全部 KEY=VALUE 四行（base=/n=/version=/tag=），
 #     供 GitHub Actions 用 steps.<id>.outputs.<key> 消费（release.yml 依赖此路径）。
 #
-# 历史坑（勿回退）：早期 stdout 也打四行 KEY=VALUE，导致 auto-upgrade.yml 里
+# 历史坑（勿回退）：早期 stdout 也打四行 KEY=VALUE，导致 release.yml 的 upgrade-opencode job 里
 #   `$(next-dokng-version.sh)` 把四行整个吞进变量，git tag 报 "not a valid tag name"。
 #   现在 stdout 与 GITHUB_OUTPUT 职责分离：stdout=纯值给命令替换，GITHUB_OUTPUT=KEY=VALUE 给 Actions。
 #

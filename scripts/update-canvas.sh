@@ -29,7 +29,7 @@
 #
 # 注意：升级后务必重放画布补丁并验证构建——
 #   scripts/apply-canvas-patches.sh --check   # 补丁能否干净重放
-#   （构建验证：cd infinite-canvas/web && bun install && bun run build，见 auto-upgrade-canvas.yml）
+#   （构建验证：cd infinite-canvas/web && bun install && bun run build，见 release.yml 的 upgrade-canvas job）
 #   构建期 vite.config.ts 读 infinite-canvas/VERSION 与 infinite-canvas/CHANGELOG.md（readFileSync 无
 #   try/catch），切 tag 后这两文件随上游一起在位，勿单独删。
 set -euo pipefail

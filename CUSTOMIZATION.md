@@ -206,7 +206,8 @@ OPENCODE_CHANNEL=prod bun run electron-builder \
 ```
 
 无签名凭据时设 `CX_UNSIGNED=1` 出未签名包（关公证 / 移除签名回调）。真实签名待有
-证书时去掉该 env 即可。CI 已把这些编排在 `.github/workflows/release.yml` 里。
+证书时去掉该 env 即可。CI 已把这些编排在 `.github/workflows/release.yml` 的 package job 里
+（该单一 workflow 还含 upgrade-opencode / upgrade-canvas 两段每日基线升级，见 README「CI 发布」）。
 
 ---
 
