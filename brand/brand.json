@@ -6,5 +6,5 @@
   "channelName": "内置渠道",
   "defaultModel": "gpt-5-codex",
   "defaultLocale": "zh",
-  "updateBaseUrl": "https://dl.dokng.com/latest"
+  "updateBaseUrl": "https://dl.dokng.com/open-code"
 }

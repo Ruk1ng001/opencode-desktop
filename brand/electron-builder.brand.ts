@@ -52,7 +52,7 @@ const unsigned = process.env.CX_UNSIGNED === "1"
 // [cx] 自更新源：优先 Cloudflare R2（generic，出站免费 + 全球 CDN），GitHub 作回退。
 // electron-updater 支持 publish 数组多源：数组首项写进产物 app-update.yml 的主源，
 // 客户端自更新先查 R2 的 latest*.yml；R2 不可达时回退 GitHub Release。
-//   - generic url 来自 brand.json 的 updateBaseUrl（如 https://dl.<域名>/latest），
+//   - generic url 来自 brand.json 的 updateBaseUrl（如 https://dl.<域名>/open-code），
 //     与从 brand.json 读 appId/productName 的模式一致，域名不散落硬编码。
 //   - 占位域名（含 example.com）或缺省时回退为纯 GitHub publish：本地构建 / 未绑 R2
 //     的环境不受影响，app-update.yml 仍带 GitHub 源可正常自更新。

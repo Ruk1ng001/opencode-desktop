@@ -134,13 +134,22 @@ packages/app/src/components/cx-account/cx-account-launcher.tsx
 packages/app/src/pages/layout-new.tsx
 
 #
-# [08-self-update-prerelease] 放行 prerelease，让 cx 自更新能选中 -cx.N 版本。
-#   updater.ts 的 allowPrerelease=false → true。cx 版本号 -cx.N 属 semver prerelease，不开则
+# [08-self-update-prerelease] 放行 prerelease + latest*.yml 安装包 URL 下沉版本子目录。
+#   updater.ts：allowPrerelease=false → true。cx 版本号 -cx.N 属 semver prerelease，不开则
 #   electron-updater 走 /releases/latest（GitHub 排除带 - 的 release）永远查不到；开后走 atom feed
-#   按 "cx" 分量匹配。配套（父仓库，非补丁）：brand publish 源改本仓库 + mac 加 zip；release.yml
-#   注入版本号 + 上传/合并 latest*.yml。
+#   按 "cx" 分量匹配。
+#   finalize-latest-yml.ts：serialize() 把 files[].url 前缀成 <version>/（形如 1.17.15-dokng.3/），
+#   使 R2 上安装包下沉到 open-code/<version>/ 子目录（与 cc-switch 同构），而 latest*.yml 仍留在
+#   open-code/ 根、固定 URL 轮询。electron-updater 的 GenericProvider 用 new URL(url, updateBaseUrl)
+#   解析产物地址，故 url 带 <version>/ 前缀即可拼到子目录；version 由调用方剥 v 前缀。
+#   配套（父仓库，非补丁）：brand publish 源改本仓库 + mac 加 zip；release.yml 注入版本号 +
+#   合并 latest*.yml + R2 双写（安装包进 <version>/ immutable、元数据留根 no-cache）。
+#   [dokng] finalize-latest-yml.ts：安装包在 R2 上下沉到 open-code/<version>/ 子目录（与 cc-switch
+#   同构），serialize() 给 latest*.yml 的 url 加 <version>/ 前缀，electron-updater 的 GenericProvider
+#   才能用 new URL(url, updateBaseUrl) 拼到子目录里的产物；元数据本身仍留在产品根固定 URL 轮询。
 [08-self-update-prerelease]
 packages/desktop/src/main/updater.ts
+packages/desktop/scripts/finalize-latest-yml.ts
 
 # 账户面板（app 包，原生 v2 Dialog + v2 语义变量）——承载 US-005 → US-013 的账户面板全部能力，
 # 由原 desktop 包 renderer/balance/balance-panel.tsx（自绘浮层 + 硬编码金色内联样式）迁入并用
