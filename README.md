@@ -234,8 +234,35 @@ R2 上的 `latest*.yml`，按 `version` 比对），GitHub 作为回退源仍写
 1. 建 R2 桶，绑自定义子域（如 `dl.你的域名`）。
 2. 建 R2 API Token，在仓库 Secret 配 `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` /
    `R2_SECRET_ACCESS_KEY` / `R2_BUCKET`。
-3. 把 `brand/brand.json` 的 `updateBaseUrl` 改成 `https://dl.你的域名/latest`。
+3. 把 `brand/brand.json` 的 `updateBaseUrl` 改成 `https://dl.你的域名/open-code`。
 4. （下载页）建 Cloudflare Pages 项目连 `brand/download-page/`，绑下载页子域。
+
+#### R2 目录布局
+
+产物按「产品名 / 版本子目录」组织，元数据留在产品根（固定 URL、供 updater 轮询），
+安装包下沉到 `<version>/` 子目录（URL 每版唯一）。与 cc-switch 同构：
+
+```
+dl.你的域名/
+└── open-code/                      ← 产品根（updateBaseUrl 指向此处）
+    ├── latest.yml                  ← Windows 更新元数据 ┐ 固定 URL、每版覆盖
+    ├── latest-mac.yml              ← macOS 更新元数据   │ → no-cache（禁 CDN 缓存，
+    ├── latest-linux.yml            ← Linux 更新元数据   │   否则客户端拉不到新版）
+    ├── latest-linux-arm64.yml      ← Linux ARM64 元数据 ┘
+    └── <version>/                  ← 版本子目录，形如 1.17.15-dokng.3
+        ├── *.exe / *.dmg / *.zip / *.AppImage   ┐ 文件名带版本、URL 唯一
+        └── *.blockmap                           ┘ → immutable（长缓存）
+```
+
+要点：
+- `latest*.yml` 里的 `url` 字段带 `<version>/` 前缀（`finalize-latest-yml.ts` 生成），
+  `electron-updater` 的 generic provider 用 `new URL(url, updateBaseUrl)` 拼出安装包地址。
+- 元数据禁缓存、安装包 immutable 长缓存，由 `release.yml` 的 R2 双写步骤分别设置
+  `cache-control`。
+- CI 只保留最近 3 个版本子目录（按版本 token 排序清理），根下 `latest*.yml` 永远保留。
+
+> 注：R2 顶层目录名从早期的 `latest/` 改为 `open-code/`（作为产品名，与 cc-switch 对齐）。
+> 已发布的旧客户端 `updateBaseUrl` 仍指向 `latest/`，改名后需另行迁移或双写兼容。
 
 ---
 
